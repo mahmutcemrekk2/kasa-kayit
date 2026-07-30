@@ -63,6 +63,7 @@ export default function KasaApp() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [newProjectOpen, setNewProjectOpen] = useState(false);
   const [editProjectTarget, setEditProjectTarget] = useState(null);
+  const [editDebtTarget, setEditDebtTarget] = useState(null);
   const [confirmModal, setConfirmModal] = useState(null); // { message, onYes }
 
   useEffect(() => {
@@ -296,6 +297,13 @@ export default function KasaApp() {
     return !error;
   }
 
+  async function updateDebtPayment(id, entry) {
+    const payload = { amount: entry.amount, description: entry.desc, payment_date: entry.date };
+    const { error } = await supabase.from('kasa_debt_payments').update(payload).eq('id', id);
+    if (!error) setDebtPayments((prev) => prev.map((p) => (p.id === id ? { ...p, ...payload } : p)));
+    return !error;
+  }
+
   async function deleteDebtPayment(id) {
     const { error } = await supabase.from('kasa_debt_payments').delete().eq('id', id);
     if (!error) setDebtPayments((prev) => prev.filter((p) => p.id !== id));
@@ -308,6 +316,20 @@ export default function KasaApp() {
     const payload = { paid: nowPaid, paid_date: nowPaid ? todayStr() : null, paid_by: nowPaid ? currentUser : null };
     const { error } = await supabase.from('kasa_debt_installments').update(payload).eq('id', id);
     if (!error) setInstallments((prev) => prev.map((i) => (i.id === id ? { ...i, ...payload } : i)));
+  }
+
+  async function updateDebt(id, entry) {
+    const payload = {
+      type: entry.type,
+      amount: entry.amount,
+      currency: entry.currency,
+      party: entry.party,
+      description: entry.desc,
+      debt_date: entry.date,
+    };
+    const { error } = await supabase.from('kasa_debts').update(payload).eq('id', id);
+    if (!error) setDebts((prev) => prev.map((d) => (d.id === id ? { ...d, ...payload } : d)));
+    return !error;
   }
 
   async function deleteDebt(id) {
@@ -454,6 +476,7 @@ export default function KasaApp() {
           onDeleteTxn={deleteTxn}
           onAddDebt={async (entry) => { await addDebt({ ...entry, projectId: activeProjectId, addedBy: currentUser }); }}
           onOpenPayments={setPaymentDebtId}
+          onEditDebt={setEditDebtTarget}
           onDeleteDebt={(id) => setConfirmModal({ message: 'Bu borç kaydını silmek istediğinize emin misiniz?', onYes: () => deleteDebt(id) })}
         />
       )}
@@ -478,6 +501,7 @@ export default function KasaApp() {
           onLogout={() => { setCurrentUser(null); clearSession(); setView('login'); }}
           onAddDebt={async (entry) => { await addDebt({ ...entry, addedBy: currentUser }); }}
           onOpenPayments={setPaymentDebtId}
+          onEditDebt={setEditDebtTarget}
           onDeleteDebt={(id) => setConfirmModal({ message: 'Bu borç kaydını silmek istediğinize emin misiniz?', onYes: () => deleteDebt(id) })}
         />
       )}
@@ -496,6 +520,7 @@ export default function KasaApp() {
           debt={debts.find((d) => d.id === paymentDebtId)}
           payments={debtPayments.filter((p) => p.debt_id === paymentDebtId)}
           onAddPayment={async (amount, date, desc) => { await addDebtPayment({ debtId: paymentDebtId, amount, date, desc, addedBy: currentUser }); }}
+          onEditPayment={updateDebtPayment}
           onDeletePayment={(id) => setConfirmModal({ message: 'Bu ödeme kaydını silmek istediğinize emin misiniz?', onYes: () => deleteDebtPayment(id) })}
           onClose={() => setPaymentDebtId(null)}
         />
@@ -536,6 +561,18 @@ export default function KasaApp() {
             const result = await updateProjectName(editProjectTarget.id, name);
             if (result.success) setEditProjectTarget(null);
             return result;
+          }}
+        />
+      )}
+
+      {editDebtTarget && (
+        <EditDebtModal
+          debt={editDebtTarget}
+          onClose={() => setEditDebtTarget(null)}
+          onSave={async (entry) => {
+            const ok = await updateDebt(editDebtTarget.id, entry);
+            if (ok) setEditDebtTarget(null);
+            return ok;
           }}
         />
       )}
@@ -938,7 +975,7 @@ function ProjectScreen(props) {
     filter, setFilter, formType, setFormType, projectTab, setProjectTab,
     debtFormType, setDebtFormType, debtFilter, setDebtFilter,
     rates, ratesLoading, onRefreshRates, showRateIssue, rateIssueAttempted, onRetryRates, onCloseRateIssue,
-    onBack, onLogout, onAddTxn, onDeleteTxn, onAddDebt, onOpenPayments, onDeleteDebt,
+    onBack, onLogout, onAddTxn, onDeleteTxn, onAddDebt, onOpenPayments, onEditDebt, onDeleteDebt,
   } = props;
 
   const [txnError, setTxnError] = useState('');
@@ -1009,7 +1046,7 @@ function ProjectScreen(props) {
           <RatesBar rates={rates} ratesLoading={ratesLoading} onRefresh={onRefreshRates} />
           <div className="kasa-grid">
             <DebtForm projects={projects} showProjectSelect={false} debtFormType={debtFormType} setDebtFormType={setDebtFormType} onAdd={onAddDebt} />
-            <DebtListWithRates debts={debts} debtPayments={debtPayments} installments={installments} projects={projects} rates={rates} debtFilter={debtFilter} setDebtFilter={setDebtFilter} showProjectTag={false} onOpenPayments={onOpenPayments} onDelete={onDeleteDebt} />
+            <DebtListWithRates debts={debts} debtPayments={debtPayments} installments={installments} projects={projects} rates={rates} debtFilter={debtFilter} setDebtFilter={setDebtFilter} showProjectTag={false} onOpenPayments={onOpenPayments} onEdit={onEditDebt} onDelete={onDeleteDebt} />
           </div>
           {showRateIssue && (
             <RateIssueModal rates={rates} attempted={rateIssueAttempted} onRetry={onRetryRates} onClose={onCloseRateIssue} loading={ratesLoading} />
@@ -1129,7 +1166,7 @@ function CompanyDebtsScreen(props) {
   const {
     settings, projects, currentUser, debts, debtPayments, installments, debtFormType, setDebtFormType, debtFilter, setDebtFilter,
     debtTotals, rates, ratesLoading, onRefreshRates, showRateIssue, rateIssueAttempted, onRetryRates, onCloseRateIssue,
-    onBack, onLogout, onAddDebt, onOpenPayments, onDeleteDebt,
+    onBack, onLogout, onAddDebt, onOpenPayments, onEditDebt, onDeleteDebt,
   } = props;
 
   return (
@@ -1163,7 +1200,7 @@ function CompanyDebtsScreen(props) {
       <RatesBar rates={rates} ratesLoading={ratesLoading} onRefresh={onRefreshRates} />
       <div className="kasa-grid">
         <DebtForm projects={projects} showProjectSelect={true} debtFormType={debtFormType} setDebtFormType={setDebtFormType} onAdd={onAddDebt} />
-        <DebtListWithRates debts={debts} debtPayments={debtPayments} installments={installments} projects={projects} rates={rates} debtFilter={debtFilter} setDebtFilter={setDebtFilter} showProjectTag={true} onOpenPayments={onOpenPayments} onDelete={onDeleteDebt} />
+        <DebtListWithRates debts={debts} debtPayments={debtPayments} installments={installments} projects={projects} rates={rates} debtFilter={debtFilter} setDebtFilter={setDebtFilter} showProjectTag={true} onOpenPayments={onOpenPayments} onEdit={onEditDebt} onDelete={onDeleteDebt} />
       </div>
       {showRateIssue && (
         <RateIssueModal rates={rates} attempted={rateIssueAttempted} onRetry={onRetryRates} onClose={onCloseRateIssue} loading={ratesLoading} />
@@ -1179,7 +1216,7 @@ function formatCurrencyAmount(amount, currency) {
   return `${new Intl.NumberFormat('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(amount)} ${meta.unit ? meta.unit + ' ' : ''}${meta.label}`;
 }
 
-function DebtListWithRates({ debts, debtPayments, installments, projects, rates, debtFilter, setDebtFilter, showProjectTag, onOpenPayments, onDelete }) {
+function DebtListWithRates({ debts, debtPayments, installments, projects, rates, debtFilter, setDebtFilter, showProjectTag, onOpenPayments, onEdit, onDelete }) {
   return (
     <div className="kasa-panel">
       <h2>Borçlar</h2>
@@ -1232,6 +1269,7 @@ function DebtListWithRates({ debts, debtPayments, installments, projects, rates,
                   ) : fmtMoney(d.amount)}
                 </div>
                 <button className={`kasa-paid-badge ${badgeClass}`} onClick={() => onOpenPayments(d.id)}>{badgeLabel}</button>
+                <button className="kasa-project-edit" title="Borcu düzenle" onClick={() => onEdit(d)}>✎</button>
                 <button className="kasa-del" title="Sil" onClick={() => onDelete(d.id)}>✕</button>
               </div>
             );
@@ -1364,8 +1402,9 @@ function InstallmentModal({ debt, installments, onTogglePaid, onClose }) {
   );
 }
 
-function PaymentModal({ debt, payments, onAddPayment, onDeletePayment, onClose }) {
+function PaymentModal({ debt, payments, onAddPayment, onEditPayment, onDeletePayment, onClose }) {
   const [error, setError] = useState('');
+  const [editingPayment, setEditingPayment] = useState(null);
   if (!debt) return null;
   const meta = currencyMeta(debt.currency);
   const paidAmount = debtPaidAmount(debt, payments);
@@ -1425,11 +1464,26 @@ function PaymentModal({ debt, payments, onAddPayment, onDeletePayment, onClose }
                     <span className="kasa-row-by">{p.added_by}</span>
                   </div>
                 </div>
+                <button className="kasa-project-edit" title="Ödemeyi düzenle" onClick={() => setEditingPayment(p)}>✎</button>
                 <button className="kasa-del" title="Sil" onClick={() => onDeletePayment(p.id)}>✕</button>
               </div>
             ))
           )}
         </div>
+
+        {editingPayment && (
+          <EditPaymentModal
+            payment={editingPayment}
+            currency={debt.currency}
+            maxAmount={remaining + Number(editingPayment.amount)}
+            onClose={() => setEditingPayment(null)}
+            onSave={async (entry) => {
+              const ok = await onEditPayment(editingPayment.id, entry);
+              if (ok) setEditingPayment(null);
+              return ok;
+            }}
+          />
+        )}
 
         {!settled && (
           <>
@@ -1454,6 +1508,44 @@ function PaymentModal({ debt, payments, onAddPayment, onDeletePayment, onClose }
         )}
 
         <button className="kasa-link" onClick={onClose}>Kapat</button>
+      </div>
+    </div>
+  );
+}
+
+function EditPaymentModal({ payment, currency, maxAmount, onClose, onSave }) {
+  const [error, setError] = useState('');
+  const meta = currencyMeta(currency);
+  return (
+    <div className="kasa-modal-overlay">
+      <div className="kasa-auth-card" style={{ maxWidth: 380 }}>
+        <h1>Ödemeyi Düzenle</h1>
+        <label className="kasa-field">Ödeme Tutarı{meta.unit ? ` (${meta.unit})` : ''}</label>
+        <input className="kasa-input" id="epm-amount" type="number" min="0" step="0.01" defaultValue={payment.amount} />
+        <label className="kasa-field">Açıklama</label>
+        <input className="kasa-input" id="epm-desc" defaultValue={payment.description || ''} autoComplete="off" />
+        <label className="kasa-field">Tarih</label>
+        <input className="kasa-input" id="epm-date" type="date" defaultValue={payment.payment_date} />
+        {error && <div className="kasa-error">{error}</div>}
+        <button
+          className="kasa-save"
+          onClick={async () => {
+            const amount = parseFloat(document.getElementById('epm-amount').value);
+            const desc = document.getElementById('epm-desc').value.trim();
+            const date = document.getElementById('epm-date').value || payment.payment_date;
+            if (!amount || amount <= 0) { setError('Geçerli bir tutar girin.'); return; }
+            if (amount > maxAmount + 0.0001) {
+              setError(`Tutar, borcun toplamını aşamaz (en fazla ${formatCurrencyAmount(maxAmount, currency)}).`);
+              return;
+            }
+            setError('');
+            const ok = await onSave({ amount, desc, date });
+            if (!ok) setError('Kaydedilemedi, tekrar deneyin.');
+          }}
+        >
+          Kaydet
+        </button>
+        <button className="kasa-link" onClick={onClose}>Vazgeç</button>
       </div>
     </div>
   );
@@ -1528,6 +1620,53 @@ function EditProjectModal({ project, onClose, onSave }) {
             if (!name) { setError('Proje adı girin.'); return; }
             const result = await onSave(name);
             if (result && !result.success) setError(result.error || 'Kaydedilemedi.');
+          }}
+        >
+          Kaydet
+        </button>
+        <button className="kasa-link" onClick={onClose}>Vazgeç</button>
+      </div>
+    </div>
+  );
+}
+
+function EditDebtModal({ debt, onClose, onSave }) {
+  const [error, setError] = useState('');
+  const [type, setType] = useState(debt.type);
+  return (
+    <div className="kasa-modal-overlay">
+      <div className="kasa-auth-card" style={{ maxWidth: 420 }}>
+        <h1>Borcu Düzenle</h1>
+        <div className="kasa-toggle">
+          <button className={`alinan ${type === 'alinan' ? 'active alinan' : ''}`} onClick={() => setType('alinan')}>Aldığımız Borç</button>
+          <button className={`verilen ${type === 'verilen' ? 'active verilen' : ''}`} onClick={() => setType('verilen')}>Verdiğimiz Borç</button>
+        </div>
+        <label className="kasa-field">Para Birimi</label>
+        <select className="kasa-select" id="ed-currency" defaultValue={debt.currency}>
+          {Object.entries(CURRENCIES).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+        </select>
+        <label className="kasa-field">Tutar</label>
+        <input className="kasa-input" id="ed-amount" type="number" min="0" step="0.01" defaultValue={debt.amount} />
+        <label className="kasa-field">{type === 'alinan' ? 'Kimden alındı' : 'Kime verildi'}</label>
+        <input className="kasa-input" id="ed-party" defaultValue={debt.party || ''} placeholder="Örn. Ahmet Usta / Banka" />
+        <label className="kasa-field">Açıklama</label>
+        <input className="kasa-input" id="ed-desc" defaultValue={debt.description || ''} placeholder="Örn. Malzeme avansı" />
+        <label className="kasa-field">Tarih</label>
+        <input className="kasa-input" id="ed-date" type="date" defaultValue={debt.debt_date} />
+        {error && <div className="kasa-error">{error}</div>}
+        <button
+          className="kasa-save"
+          onClick={async () => {
+            const amount = parseFloat(document.getElementById('ed-amount').value);
+            const currency = document.getElementById('ed-currency').value;
+            const party = document.getElementById('ed-party').value.trim();
+            const desc = document.getElementById('ed-desc').value.trim();
+            const date = document.getElementById('ed-date').value || debt.debt_date;
+            if (!amount || amount <= 0) { setError('Geçerli bir tutar girin.'); return; }
+            if (!party) { setError('Kimden/kime bilgisini girin.'); return; }
+            setError('');
+            const ok = await onSave({ type, amount, currency, party, desc, date });
+            if (!ok) setError('Kaydedilemedi, tekrar deneyin.');
           }}
         >
           Kaydet
