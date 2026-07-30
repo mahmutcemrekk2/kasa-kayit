@@ -98,6 +98,27 @@ create table if not exists kasa_debt_installments (
   created_at timestamptz not null default now()
 );
 
+create table if not exists kasa_agreements (
+  id text primary key,
+  project_id text not null references kasa_projects(id) on delete cascade,
+  party text not null,
+  description text,
+  total_amount numeric not null,
+  agreement_date date not null,
+  added_by text,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists kasa_agreement_payments (
+  id text primary key,
+  agreement_id text not null references kasa_agreements(id) on delete cascade,
+  amount numeric not null,
+  description text,
+  payment_date date not null,
+  added_by text,
+  created_at timestamptz not null default now()
+);
+
 create table if not exists kasa_rates (
   id int primary key default 1,
   usd numeric,
@@ -133,6 +154,8 @@ alter table kasa_debts enable row level security;
 alter table kasa_debt_payments enable row level security;
 alter table kasa_debt_installments enable row level security;
 alter table kasa_banks enable row level security;
+alter table kasa_agreements enable row level security;
+alter table kasa_agreement_payments enable row level security;
 alter table kasa_rates enable row level security;
 
 drop policy if exists "allow all kasa_settings" on kasa_settings;
@@ -155,6 +178,12 @@ create policy "allow all kasa_debt_installments" on kasa_debt_installments for a
 
 drop policy if exists "allow all kasa_banks" on kasa_banks;
 create policy "allow all kasa_banks" on kasa_banks for all using (true) with check (true);
+
+drop policy if exists "allow all kasa_agreements" on kasa_agreements;
+create policy "allow all kasa_agreements" on kasa_agreements for all using (true) with check (true);
+
+drop policy if exists "allow all kasa_agreement_payments" on kasa_agreement_payments;
+create policy "allow all kasa_agreement_payments" on kasa_agreement_payments for all using (true) with check (true);
 
 drop policy if exists "allow all kasa_rates" on kasa_rates;
 create policy "allow all kasa_rates" on kasa_rates for all using (true) with check (true);

@@ -19,6 +19,8 @@ import {
   debtInstallmentsFor,
   addMonthsToDateStr,
   buildInstallmentAmounts,
+  agreementPaidAmount,
+  agreementRemaining,
 } from '../lib/supabaseClient';
 
 const SESSION_KEY = 'kasa_current_user';
@@ -46,7 +48,11 @@ export default function KasaApp() {
   const [debtPayments, setDebtPayments] = useState([]);
   const [installments, setInstallments] = useState([]);
   const [banks, setBanks] = useState([]);
+  const [agreements, setAgreements] = useState([]);
+  const [agreementPayments, setAgreementPayments] = useState([]);
   const [paymentDebtId, setPaymentDebtId] = useState(null);
+  const [paymentAgreementId, setPaymentAgreementId] = useState(null);
+  const [editAgreementTarget, setEditAgreementTarget] = useState(null);
   const [rates, setRates] = useState(null);
   const [ratesLoading, setRatesLoading] = useState(false);
   const [rateIssueDismissed, setRateIssueDismissed] = useState(false);
@@ -97,6 +103,12 @@ export default function KasaApp() {
       const { data: bankRows, error: bankErr } = await supabase.from('kasa_banks').select('*').order('name', { ascending: true });
       if (bankErr) throw bankErr;
 
+      const { data: agreementRows, error: agrErr } = await supabase.from('kasa_agreements').select('*');
+      if (agrErr) throw agrErr;
+
+      const { data: agreementPaymentRows, error: agrPmErr } = await supabase.from('kasa_agreement_payments').select('*');
+      if (agrPmErr) throw agrPmErr;
+
       const { data: rateRow, error: rErr } = await supabase.from('kasa_rates').select('*').eq('id', 1).maybeSingle();
       if (rErr) throw rErr;
 
@@ -114,6 +126,8 @@ export default function KasaApp() {
       setDebtPayments(paymentRows || []);
       setInstallments(installmentRows || []);
       setBanks(bankRows || []);
+      setAgreements(agreementRows || []);
+      setAgreementPayments(agreementPaymentRows || []);
       setRates(rateRow || null);
       setView(settingsRow ? 'login' : 'setup');
 
@@ -360,6 +374,65 @@ export default function KasaApp() {
     }
   }
 
+  async function addAgreement(entry) {
+    const row = {
+      id: uid(),
+      project_id: entry.projectId,
+      party: entry.party,
+      description: entry.desc,
+      total_amount: entry.totalAmount,
+      agreement_date: entry.date,
+      added_by: entry.addedBy,
+      created_at: new Date().toISOString(),
+    };
+    const { error } = await supabase.from('kasa_agreements').insert(row);
+    if (error) return false;
+    setAgreements((prev) => [...prev, row]);
+    return true;
+  }
+
+  async function updateAgreement(id, entry) {
+    const payload = { party: entry.party, description: entry.desc, total_amount: entry.totalAmount, agreement_date: entry.date };
+    const { error } = await supabase.from('kasa_agreements').update(payload).eq('id', id);
+    if (!error) setAgreements((prev) => prev.map((a) => (a.id === id ? { ...a, ...payload } : a)));
+    return !error;
+  }
+
+  async function deleteAgreement(id) {
+    const { error } = await supabase.from('kasa_agreements').delete().eq('id', id);
+    if (!error) {
+      setAgreements((prev) => prev.filter((a) => a.id !== id));
+      setAgreementPayments((prev) => prev.filter((p) => p.agreement_id !== id));
+    }
+  }
+
+  async function addAgreementPayment(entry) {
+    const row = {
+      id: uid(),
+      agreement_id: entry.agreementId,
+      amount: entry.amount,
+      description: entry.desc,
+      payment_date: entry.date,
+      added_by: entry.addedBy,
+      created_at: new Date().toISOString(),
+    };
+    const { error } = await supabase.from('kasa_agreement_payments').insert(row);
+    if (!error) setAgreementPayments((prev) => [...prev, row]);
+    return !error;
+  }
+
+  async function updateAgreementPayment(id, entry) {
+    const payload = { amount: entry.amount, description: entry.desc, payment_date: entry.date };
+    const { error } = await supabase.from('kasa_agreement_payments').update(payload).eq('id', id);
+    if (!error) setAgreementPayments((prev) => prev.map((p) => (p.id === id ? { ...p, ...payload } : p)));
+    return !error;
+  }
+
+  async function deleteAgreementPayment(id) {
+    const { error } = await supabase.from('kasa_agreement_payments').delete().eq('id', id);
+    if (!error) setAgreementPayments((prev) => prev.filter((p) => p.id !== id));
+  }
+
   // ---------- Derived helpers ----------
   function totalsFor(projectId) {
     let income = 0, expense = 0;
@@ -380,6 +453,22 @@ export default function KasaApp() {
       if (d.type === 'alinan') alinan += val; else verilen += val;
     }
     return { alinan, verilen, net: alinan - verilen };
+  }
+
+  function agreementTotalsFor(projectId) {
+    let total = 0, paid = 0;
+    for (const a of agreements) {
+      if (projectId !== null && a.project_id !== projectId) continue;
+      total += Number(a.total_amount);
+      paid += agreementPaidAmount(a, agreementPayments);
+    }
+    return { total, paid, remaining: Math.max(0, total - paid) };
+  }
+
+  function filteredAgreements(projectId) {
+    return [...agreements]
+      .filter((a) => (projectId === null ? true : a.project_id === projectId))
+      .sort((a, b) => b.agreement_date.localeCompare(a.agreement_date) || new Date(b.created_at) - new Date(a.created_at));
   }
 
   function filteredTxns(projectId) {
@@ -452,8 +541,10 @@ export default function KasaApp() {
           currentUser={currentUser}
           totalsFor={totalsFor}
           debtTotalsFor={debtTotalsFor}
+          agreementTotalsFor={agreementTotalsFor}
           onOpenProject={(id) => { setActiveProjectId(id); setProjectTab('hareketler'); setFilter('all'); setView('project'); }}
           onGotoDebts={() => { setDebtFilter('all'); setView('debts'); }}
+          onGotoAgreements={() => setView('agreements')}
           onLogout={() => { setCurrentUser(null); clearSession(); setView('login'); }}
           onOpenSettings={() => setSettingsOpen(true)}
           onNewProject={() => setNewProjectOpen(true)}
@@ -480,6 +571,13 @@ export default function KasaApp() {
           installments={installments}
           banks={banks}
           onAddBank={addBank}
+          agreements={filteredAgreements(activeProjectId)}
+          agreementPayments={agreementPayments}
+          agreementTotals={agreementTotalsFor(activeProjectId)}
+          onAddAgreement={async (entry) => { await addAgreement({ ...entry, projectId: activeProjectId, addedBy: currentUser }); }}
+          onOpenAgreementPayments={setPaymentAgreementId}
+          onEditAgreement={setEditAgreementTarget}
+          onDeleteAgreement={(id) => setConfirmModal({ message: 'Bu anlaşmayı ve tüm ödeme kayıtlarını silmek istediğinize emin misiniz?', onYes: () => deleteAgreement(id) })}
           filter={filter} setFilter={setFilter}
           formType={formType} setFormType={setFormType}
           projectTab={projectTab} setProjectTab={setProjectTab}
@@ -524,6 +622,46 @@ export default function KasaApp() {
           onOpenPayments={setPaymentDebtId}
           onEditDebt={setEditDebtTarget}
           onDeleteDebt={(id) => setConfirmModal({ message: 'Bu borç kaydını silmek istediğinize emin misiniz?', onYes: () => deleteDebt(id) })}
+        />
+      )}
+
+      {view === 'agreements' && settings && (
+        <CompanyAgreementsScreen
+          settings={settings}
+          projects={projects}
+          currentUser={currentUser}
+          agreements={filteredAgreements(null)}
+          agreementPayments={agreementPayments}
+          agreementTotals={agreementTotalsFor(null)}
+          onBack={() => setView('overview')}
+          onLogout={() => { setCurrentUser(null); clearSession(); setView('login'); }}
+          onAddAgreement={async (entry) => { await addAgreement({ ...entry, addedBy: currentUser }); }}
+          onOpenAgreementPayments={setPaymentAgreementId}
+          onEditAgreement={setEditAgreementTarget}
+          onDeleteAgreement={(id) => setConfirmModal({ message: 'Bu anlaşmayı ve tüm ödeme kayıtlarını silmek istediğinize emin misiniz?', onYes: () => deleteAgreement(id) })}
+        />
+      )}
+
+      {paymentAgreementId && (
+        <AgreementPaymentModal
+          agreement={agreements.find((a) => a.id === paymentAgreementId)}
+          payments={agreementPayments.filter((p) => p.agreement_id === paymentAgreementId)}
+          onAddPayment={async (amount, date, desc) => { await addAgreementPayment({ agreementId: paymentAgreementId, amount, date, desc, addedBy: currentUser }); }}
+          onEditPayment={updateAgreementPayment}
+          onDeletePayment={(id) => setConfirmModal({ message: 'Bu ödeme kaydını silmek istediğinize emin misiniz?', onYes: () => deleteAgreementPayment(id) })}
+          onClose={() => setPaymentAgreementId(null)}
+        />
+      )}
+
+      {editAgreementTarget && (
+        <EditAgreementModal
+          agreement={editAgreementTarget}
+          onClose={() => setEditAgreementTarget(null)}
+          onSave={async (entry) => {
+            const ok = await updateAgreement(editAgreementTarget.id, entry);
+            if (ok) setEditAgreementTarget(null);
+            return ok;
+          }}
         />
       )}
 
@@ -724,9 +862,10 @@ function LoginScreen({ settings, onLogin }) {
   );
 }
 
-function OverviewScreen({ settings, projects, currentUser, totalsFor, debtTotalsFor, onOpenProject, onGotoDebts, onLogout, onOpenSettings, onNewProject, onEditProject, onReorderProjects, onDeleteProject }) {
+function OverviewScreen({ settings, projects, currentUser, totalsFor, debtTotalsFor, agreementTotalsFor, onOpenProject, onGotoDebts, onGotoAgreements, onLogout, onOpenSettings, onNewProject, onEditProject, onReorderProjects, onDeleteProject }) {
   const grand = totalsFor(null);
   const grandDebt = debtTotalsFor(null);
+  const grandAgreement = agreementTotalsFor(null);
   const [draggedId, setDraggedId] = useState(null);
   const sortedProjects = [...projects].sort((a, b) => {
     if (a.is_general !== b.is_general) return a.is_general ? -1 : 1;
@@ -792,6 +931,26 @@ function OverviewScreen({ settings, projects, currentUser, totalsFor, debtTotals
           <div className="kasa-seal"></div>
           <p className="kasa-stat-label">Net Borç Durumu</p>
           <p className="kasa-stat-value" style={{ color: grandDebt.net > 0 ? 'var(--expense)' : 'var(--income)' }}>{fmtMoney(grandDebt.net)}</p>
+        </div>
+      </div>
+
+      <div className="kasa-section-head">
+        <h2>Anlaşma Durumu</h2>
+        <button className="kasa-add-project" onClick={onGotoAgreements}>Anlaşmaları Görüntüle →</button>
+      </div>
+      <div className="kasa-stats">
+        <div className="kasa-stat main">
+          <div className="kasa-seal"></div>
+          <p className="kasa-stat-label">Toplam Anlaşma Tutarı</p>
+          <p className="kasa-stat-value">{fmtMoney(grandAgreement.total)}</p>
+        </div>
+        <div className="kasa-stat income">
+          <p className="kasa-stat-label">Ödenen</p>
+          <p className="kasa-stat-value">{fmtMoney(grandAgreement.paid)}</p>
+        </div>
+        <div className="kasa-stat expense">
+          <p className="kasa-stat-label">Kalan</p>
+          <p className="kasa-stat-value">{fmtMoney(grandAgreement.remaining)}</p>
         </div>
       </div>
 
@@ -1040,6 +1199,7 @@ function ProjectScreen(props) {
   const {
     settings, project, projects, currentUser, totals, debtTotals, txns, debts, debtPayments, installments,
     banks, onAddBank,
+    agreements, agreementPayments, agreementTotals, onAddAgreement, onOpenAgreementPayments, onEditAgreement, onDeleteAgreement,
     filter, setFilter, formType, setFormType, projectTab, setProjectTab,
     debtFormType, setDebtFormType, debtFilter, setDebtFilter,
     rates, ratesLoading, onRefreshRates, showRateIssue, rateIssueAttempted, onRetryRates, onCloseRateIssue,
@@ -1091,11 +1251,34 @@ function ProjectScreen(props) {
       )}
 
       <div className="kasa-tabs">
-        <button className={projectTab !== 'borclar' ? 'active' : ''} onClick={() => setProjectTab('hareketler')}>Kasa Hareketleri</button>
+        <button className={projectTab === 'hareketler' ? 'active' : ''} onClick={() => setProjectTab('hareketler')}>Kasa Hareketleri</button>
         <button className={projectTab === 'borclar' ? 'active' : ''} onClick={() => setProjectTab('borclar')}>Borçlar</button>
+        <button className={projectTab === 'anlasmalar' ? 'active' : ''} onClick={() => setProjectTab('anlasmalar')}>Anlaşmalar</button>
       </div>
 
-      {projectTab === 'borclar' ? (
+      {projectTab === 'anlasmalar' ? (
+        <>
+          <div className="kasa-stats">
+            <div className="kasa-stat main">
+              <div className="kasa-seal"></div>
+              <p className="kasa-stat-label">Toplam Anlaşma Tutarı</p>
+              <p className="kasa-stat-value">{fmtMoney(agreementTotals.total)}</p>
+            </div>
+            <div className="kasa-stat income">
+              <p className="kasa-stat-label">Ödenen</p>
+              <p className="kasa-stat-value">{fmtMoney(agreementTotals.paid)}</p>
+            </div>
+            <div className="kasa-stat expense">
+              <p className="kasa-stat-label">Kalan</p>
+              <p className="kasa-stat-value">{fmtMoney(agreementTotals.remaining)}</p>
+            </div>
+          </div>
+          <div className="kasa-grid">
+            <AgreementForm projects={projects} showProjectSelect={false} onAdd={onAddAgreement} />
+            <AgreementList agreements={agreements} agreementPayments={agreementPayments} projects={projects} showProjectTag={false} onOpenPayments={onOpenAgreementPayments} onEdit={onEditAgreement} onDelete={onDeleteAgreement} />
+          </div>
+        </>
+      ) : projectTab === 'borclar' ? (
         <>
           <div className="kasa-stats">
             <div className="kasa-stat expense">
@@ -1319,6 +1502,48 @@ function CompanyDebtsScreen(props) {
   );
 }
 
+function CompanyAgreementsScreen(props) {
+  const {
+    settings, projects, currentUser, agreements, agreementPayments, agreementTotals,
+    onBack, onLogout, onAddAgreement, onOpenAgreementPayments, onEditAgreement, onDeleteAgreement,
+  } = props;
+
+  return (
+    <div className="kasa-wrap">
+      <button className="kasa-back" onClick={onBack}>← Tüm Projeler</button>
+      <div className="kasa-topbar">
+        <div>
+          <h1 className="kasa-h1">Anlaşmalar</h1>
+          <div className="kasa-sub">{settings.company_name} · Tüm Projeler Geneli</div>
+        </div>
+        <div className="kasa-user-chip">
+          👤 {currentUser}
+          <button onClick={onLogout}>Çıkış</button>
+        </div>
+      </div>
+      <div className="kasa-stats">
+        <div className="kasa-stat main">
+          <div className="kasa-seal"></div>
+          <p className="kasa-stat-label">Toplam Anlaşma Tutarı</p>
+          <p className="kasa-stat-value">{fmtMoney(agreementTotals.total)}</p>
+        </div>
+        <div className="kasa-stat income">
+          <p className="kasa-stat-label">Ödenen</p>
+          <p className="kasa-stat-value">{fmtMoney(agreementTotals.paid)}</p>
+        </div>
+        <div className="kasa-stat expense">
+          <p className="kasa-stat-label">Kalan</p>
+          <p className="kasa-stat-value">{fmtMoney(agreementTotals.remaining)}</p>
+        </div>
+      </div>
+      <div className="kasa-grid">
+        <AgreementForm projects={projects} showProjectSelect={true} onAdd={onAddAgreement} />
+        <AgreementList agreements={agreements} agreementPayments={agreementPayments} projects={projects} showProjectTag={true} onOpenPayments={onOpenAgreementPayments} onEdit={onEditAgreement} onDelete={onDeleteAgreement} />
+      </div>
+    </div>
+  );
+}
+
 // DebtList variant that has access to `rates` for TRY conversion display
 function formatCurrencyAmount(amount, currency) {
   const meta = currencyMeta(currency);
@@ -1416,6 +1641,124 @@ function DebtListWithRates({ debts, debtPayments, installments, projects, rates,
           <div className="kasa-search-total">
             <span>Bu aramada ödenmemiş borç <strong>{fmtMoney(alinan)}</strong></span>
             <span>Bu aramada ödenmemiş alacak <strong>{fmtMoney(verilen)}</strong></span>
+          </div>
+        );
+      })()}
+    </div>
+  );
+}
+
+function AgreementForm({ projects, showProjectSelect, onAdd }) {
+  const [error, setError] = useState('');
+  return (
+    <div className="kasa-panel">
+      <h2>Anlaşma Ekle</h2>
+      <div className="kasa-fis">
+        {showProjectSelect && (
+          <>
+            <label className="kasa-field">Proje</label>
+            <select className="kasa-select" id="ag-project" defaultValue={projects.find((p) => p.is_general)?.id}>
+              {[...projects].sort((a, b) => (b.is_general ? 1 : 0) - (a.is_general ? 1 : 0)).map((p) => (
+                <option key={p.id} value={p.id}>{p.name}{p.is_general ? ' (Genel)' : ''}</option>
+              ))}
+            </select>
+          </>
+        )}
+        <label className="kasa-field">Kiminle</label>
+        <input className="kasa-input" id="ag-party" placeholder="Örn. Sucu / Elektrikçi" />
+        <label className="kasa-field">Açıklama</label>
+        <input className="kasa-input" id="ag-desc" placeholder="Örn. Su tesisatı işi" />
+        <label className="kasa-field">Toplam Tutar (₺)</label>
+        <input className="kasa-input" id="ag-amount" type="number" min="0" step="0.01" placeholder="0.00" />
+        <label className="kasa-field">Tarih</label>
+        <input className="kasa-input" id="ag-date" type="date" defaultValue={todayStr()} />
+        {error && <div className="kasa-error">{error}</div>}
+        <button
+          className="kasa-save"
+          onClick={() => {
+            const party = document.getElementById('ag-party').value.trim();
+            const desc = document.getElementById('ag-desc').value.trim();
+            const totalAmount = parseFloat(document.getElementById('ag-amount').value);
+            const date = document.getElementById('ag-date').value || todayStr();
+            const projSelect = document.getElementById('ag-project');
+            if (!party) { setError('Kiminle anlaşıldığını girin.'); return; }
+            if (!totalAmount || totalAmount <= 0) { setError('Geçerli bir tutar girin.'); return; }
+            setError('');
+            onAdd({ party, desc, totalAmount, date, projectId: projSelect ? projSelect.value : undefined });
+            document.getElementById('ag-party').value = '';
+            document.getElementById('ag-desc').value = '';
+            document.getElementById('ag-amount').value = '';
+          }}
+        >
+          Kaydet
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function AgreementList({ agreements, agreementPayments, projects, showProjectTag, onOpenPayments, onEdit, onDelete }) {
+  const [partySearch, setPartySearch] = useState('');
+  const search = partySearch.trim().toLowerCase();
+  const searchedAgreements = search ? agreements.filter((a) => a.party.toLowerCase().includes(search)) : agreements;
+
+  return (
+    <div className="kasa-panel">
+      <h2>Anlaşmalar</h2>
+      <input
+        className="kasa-input"
+        list="agreement-party-list"
+        placeholder="Kiminle ara (yaz veya listeden seç)..."
+        value={partySearch}
+        onChange={(e) => setPartySearch(e.target.value)}
+        style={{ marginBottom: 12 }}
+      />
+      <datalist id="agreement-party-list">
+        {[...new Set(agreements.map((a) => a.party).filter(Boolean))].sort().map((p) => (
+          <option key={p} value={p} />
+        ))}
+      </datalist>
+      <div>
+        {searchedAgreements.length === 0 ? (
+          <div className="kasa-empty">{search ? 'Bu aramaya uyan anlaşma yok.' : 'Henüz anlaşma yok.'}</div>
+        ) : (
+          searchedAgreements.map((a) => {
+            const proj = projects.find((pp) => pp.id === a.project_id);
+            const paidAmount = agreementPaidAmount(a, agreementPayments);
+            const remaining = agreementRemaining(a, agreementPayments);
+            const settled = remaining <= 0.0001;
+            const badgeClass = settled ? 'paid' : paidAmount > 0 ? 'partial' : 'unpaid';
+            const badgeLabel = settled ? 'Ödendi' : paidAmount > 0 ? `Kalan ${fmtMoney(remaining)}` : 'Ödenmedi';
+            return (
+              <div className="kasa-debt-row" key={a.id}>
+                <div className="kasa-row-date">{fmtDate(a.agreement_date)}</div>
+                <div>
+                  <div className="kasa-row-desc">{a.party}{a.description ? ' · ' + a.description : ''}</div>
+                  <div className="kasa-row-cat">
+                    {showProjectTag && proj ? <span className="kasa-row-proj">{proj.name}</span> : null}
+                    {showProjectTag && proj ? ' · ' : null}
+                    <span className="kasa-row-by">{a.added_by}</span>
+                  </div>
+                </div>
+                <div className="kasa-stamp gider">{fmtMoney(a.total_amount)}</div>
+                <button className={`kasa-paid-badge ${badgeClass}`} onClick={() => onOpenPayments(a.id)}>{badgeLabel}</button>
+                <button className="kasa-project-edit" title="Anlaşmayı düzenle" onClick={() => onEdit(a)}>✎</button>
+                <button className="kasa-del" title="Sil" onClick={() => onDelete(a.id)}>✕</button>
+              </div>
+            );
+          })
+        )}
+      </div>
+      {search && searchedAgreements.length > 0 && (() => {
+        let total = 0, paid = 0;
+        searchedAgreements.forEach((a) => {
+          total += Number(a.total_amount);
+          paid += agreementPaidAmount(a, agreementPayments);
+        });
+        return (
+          <div className="kasa-search-total">
+            <span>Bu aramada toplam anlaşma <strong>{fmtMoney(total)}</strong></span>
+            <span>Bu aramada kalan <strong>{fmtMoney(Math.max(0, total - paid))}</strong></span>
           </div>
         );
       })()}
@@ -1702,6 +2045,181 @@ function EditPaymentModal({ payment, currency, maxAmount, onClose, onSave }) {
             }
             setError('');
             const ok = await onSave({ amount, desc, date });
+            if (!ok) setError('Kaydedilemedi, tekrar deneyin.');
+          }}
+        >
+          Kaydet
+        </button>
+        <button className="kasa-link" onClick={onClose}>Vazgeç</button>
+      </div>
+    </div>
+  );
+}
+
+function AgreementPaymentModal({ agreement, payments, onAddPayment, onEditPayment, onDeletePayment, onClose }) {
+  const [error, setError] = useState('');
+  const [editingPayment, setEditingPayment] = useState(null);
+  if (!agreement) return null;
+  const paidAmount = agreementPaidAmount(agreement, payments);
+  const remaining = agreementRemaining(agreement, payments);
+  const settled = remaining <= 0.0001;
+  const sortedPayments = [...payments].sort(
+    (a, b) => b.payment_date.localeCompare(a.payment_date) || new Date(b.created_at) - new Date(a.created_at)
+  );
+
+  function submit(amount) {
+    if (!amount || amount <= 0) { setError('Geçerli bir tutar girin.'); return; }
+    if (amount > remaining + 0.0001) {
+      setError(`Kalan tutardan (${fmtMoney(remaining)}) fazla ödeme giremezsiniz.`);
+      return;
+    }
+    setError('');
+    const date = document.getElementById('agpm-date')?.value || todayStr();
+    const desc = document.getElementById('agpm-desc')?.value.trim() || '';
+    onAddPayment(amount, date, desc);
+    const amountInput = document.getElementById('agpm-amount');
+    const descInput = document.getElementById('agpm-desc');
+    if (amountInput) amountInput.value = '';
+    if (descInput) descInput.value = '';
+  }
+
+  return (
+    <div className="kasa-modal-overlay">
+      <div className="kasa-auth-card" style={{ maxWidth: 440 }}>
+        <h1>Ödemeler</h1>
+        <p>{agreement.party}{agreement.description ? ' · ' + agreement.description : ''}</p>
+
+        <div className="kasa-payment-summary">
+          <span>Toplam <strong>{fmtMoney(Number(agreement.total_amount))}</strong></span>
+          <span>Ödenen <strong>{fmtMoney(paidAmount)}</strong></span>
+          <span>Kalan <strong style={{ color: settled ? 'var(--income)' : 'var(--expense)' }}>{fmtMoney(remaining)}</strong></span>
+        </div>
+
+        <div className="kasa-payment-list">
+          {sortedPayments.length === 0 ? (
+            <div className="kasa-empty">Henüz ödeme kaydı yok.</div>
+          ) : (
+            sortedPayments.map((p) => (
+              <div className="kasa-payment-row" key={p.id}>
+                <span className="kasa-row-date">{fmtDate(p.payment_date)}</span>
+                <div>
+                  <div className="kasa-row-desc">{fmtMoney(Number(p.amount))}</div>
+                  <div className="kasa-row-cat">
+                    {p.description ? <>{p.description} · </> : null}
+                    <span className="kasa-row-by">{p.added_by}</span>
+                  </div>
+                </div>
+                <button className="kasa-project-edit" title="Ödemeyi düzenle" onClick={() => setEditingPayment(p)}>✎</button>
+                <button className="kasa-del" title="Sil" onClick={() => onDeletePayment(p.id)}>✕</button>
+              </div>
+            ))
+          )}
+        </div>
+
+        {editingPayment && (
+          <EditAgreementPaymentModal
+            payment={editingPayment}
+            maxAmount={remaining + Number(editingPayment.amount)}
+            onClose={() => setEditingPayment(null)}
+            onSave={async (entry) => {
+              const ok = await onEditPayment(editingPayment.id, entry);
+              if (ok) setEditingPayment(null);
+              return ok;
+            }}
+          />
+        )}
+
+        {!settled && (
+          <>
+            <label className="kasa-field">Ödeme Tutarı (₺)</label>
+            <input className="kasa-input" id="agpm-amount" type="number" min="0" step="0.01" placeholder="0.00" />
+            <label className="kasa-field">Açıklama</label>
+            <input className="kasa-input" id="agpm-desc" placeholder="Örn. Nakit elden ödeme" autoComplete="off" />
+            <label className="kasa-field">Tarih</label>
+            <input className="kasa-input" id="agpm-date" type="date" defaultValue={todayStr()} />
+            {error && <div className="kasa-error">{error}</div>}
+            <button
+              className="kasa-save"
+              style={{ marginTop: 12 }}
+              onClick={() => submit(parseFloat(document.getElementById('agpm-amount').value))}
+            >
+              Ödeme Ekle
+            </button>
+            <button className="kasa-link" onClick={() => submit(remaining)}>
+              Kalanın Tamamını Öde ({fmtMoney(remaining)})
+            </button>
+          </>
+        )}
+
+        <button className="kasa-link" onClick={onClose}>Kapat</button>
+      </div>
+    </div>
+  );
+}
+
+function EditAgreementPaymentModal({ payment, maxAmount, onClose, onSave }) {
+  const [error, setError] = useState('');
+  return (
+    <div className="kasa-modal-overlay">
+      <div className="kasa-auth-card" style={{ maxWidth: 380 }}>
+        <h1>Ödemeyi Düzenle</h1>
+        <label className="kasa-field">Ödeme Tutarı (₺)</label>
+        <input className="kasa-input" id="eagpm-amount" type="number" min="0" step="0.01" defaultValue={payment.amount} />
+        <label className="kasa-field">Açıklama</label>
+        <input className="kasa-input" id="eagpm-desc" defaultValue={payment.description || ''} autoComplete="off" />
+        <label className="kasa-field">Tarih</label>
+        <input className="kasa-input" id="eagpm-date" type="date" defaultValue={payment.payment_date} />
+        {error && <div className="kasa-error">{error}</div>}
+        <button
+          className="kasa-save"
+          onClick={async () => {
+            const amount = parseFloat(document.getElementById('eagpm-amount').value);
+            const desc = document.getElementById('eagpm-desc').value.trim();
+            const date = document.getElementById('eagpm-date').value || payment.payment_date;
+            if (!amount || amount <= 0) { setError('Geçerli bir tutar girin.'); return; }
+            if (amount > maxAmount + 0.0001) {
+              setError(`Tutar, anlaşmanın toplamını aşamaz (en fazla ${fmtMoney(maxAmount)}).`);
+              return;
+            }
+            setError('');
+            const ok = await onSave({ amount, desc, date });
+            if (!ok) setError('Kaydedilemedi, tekrar deneyin.');
+          }}
+        >
+          Kaydet
+        </button>
+        <button className="kasa-link" onClick={onClose}>Vazgeç</button>
+      </div>
+    </div>
+  );
+}
+
+function EditAgreementModal({ agreement, onClose, onSave }) {
+  const [error, setError] = useState('');
+  return (
+    <div className="kasa-modal-overlay">
+      <div className="kasa-auth-card" style={{ maxWidth: 400 }}>
+        <h1>Anlaşmayı Düzenle</h1>
+        <label className="kasa-field">Kiminle</label>
+        <input className="kasa-input" id="eag-party" defaultValue={agreement.party} placeholder="Örn. Sucu / Elektrikçi" />
+        <label className="kasa-field">Açıklama</label>
+        <input className="kasa-input" id="eag-desc" defaultValue={agreement.description || ''} placeholder="Örn. Su tesisatı işi" />
+        <label className="kasa-field">Toplam Tutar (₺)</label>
+        <input className="kasa-input" id="eag-amount" type="number" min="0" step="0.01" defaultValue={agreement.total_amount} />
+        <label className="kasa-field">Tarih</label>
+        <input className="kasa-input" id="eag-date" type="date" defaultValue={agreement.agreement_date} />
+        {error && <div className="kasa-error">{error}</div>}
+        <button
+          className="kasa-save"
+          onClick={async () => {
+            const party = document.getElementById('eag-party').value.trim();
+            const desc = document.getElementById('eag-desc').value.trim();
+            const totalAmount = parseFloat(document.getElementById('eag-amount').value);
+            const date = document.getElementById('eag-date').value || agreement.agreement_date;
+            if (!party) { setError('Kiminle anlaşıldığını girin.'); return; }
+            if (!totalAmount || totalAmount <= 0) { setError('Geçerli bir tutar girin.'); return; }
+            setError('');
+            const ok = await onSave({ party, desc, totalAmount, date });
             if (!ok) setError('Kaydedilemedi, tekrar deneyin.');
           }}
         >
