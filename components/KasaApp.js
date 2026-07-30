@@ -64,6 +64,7 @@ export default function KasaApp() {
   const [newProjectOpen, setNewProjectOpen] = useState(false);
   const [editProjectTarget, setEditProjectTarget] = useState(null);
   const [editDebtTarget, setEditDebtTarget] = useState(null);
+  const [editTxnTarget, setEditTxnTarget] = useState(null);
   const [confirmModal, setConfirmModal] = useState(null); // { message, onYes }
 
   useEffect(() => {
@@ -239,6 +240,21 @@ export default function KasaApp() {
     if (error) return null;
     setBanks((prev) => [...prev, row].sort((a, b) => a.name.localeCompare(b.name)));
     return row.name;
+  }
+
+  async function updateTxn(id, entry) {
+    const payload = {
+      type: entry.type,
+      amount: entry.amount,
+      category: entry.category,
+      description: entry.desc,
+      party: entry.party || null,
+      bank: entry.bank || null,
+      txn_date: entry.date,
+    };
+    const { error } = await supabase.from('kasa_transactions').update(payload).eq('id', id);
+    if (!error) setTxns((prev) => prev.map((t) => (t.id === id ? { ...t, ...payload } : t)));
+    return !error;
   }
 
   async function deleteTxn(id) {
@@ -477,6 +493,7 @@ export default function KasaApp() {
           onBack={() => setView('overview')}
           onLogout={() => { setCurrentUser(null); clearSession(); setView('login'); }}
           onAddTxn={async (entry) => { await addTxn({ ...entry, addedBy: currentUser }); }}
+          onEditTxn={setEditTxnTarget}
           onDeleteTxn={deleteTxn}
           onAddDebt={async (entry) => { await addDebt({ ...entry, projectId: activeProjectId, addedBy: currentUser }); }}
           onOpenPayments={setPaymentDebtId}
@@ -577,6 +594,19 @@ export default function KasaApp() {
           onSave={async (entry) => {
             const ok = await updateDebt(editDebtTarget.id, entry);
             if (ok) setEditDebtTarget(null);
+            return ok;
+          }}
+        />
+      )}
+
+      {editTxnTarget && (
+        <EditTxnModal
+          txn={editTxnTarget}
+          banks={banks}
+          onClose={() => setEditTxnTarget(null)}
+          onSave={async (entry) => {
+            const ok = await updateTxn(editTxnTarget.id, entry);
+            if (ok) setEditTxnTarget(null);
             return ok;
           }}
         />
@@ -1013,7 +1043,7 @@ function ProjectScreen(props) {
     filter, setFilter, formType, setFormType, projectTab, setProjectTab,
     debtFormType, setDebtFormType, debtFilter, setDebtFilter,
     rates, ratesLoading, onRefreshRates, showRateIssue, rateIssueAttempted, onRetryRates, onCloseRateIssue,
-    onBack, onLogout, onAddTxn, onDeleteTxn, onAddDebt, onOpenPayments, onEditDebt, onDeleteDebt,
+    onBack, onLogout, onAddTxn, onEditTxn, onDeleteTxn, onAddDebt, onOpenPayments, onEditDebt, onDeleteDebt,
   } = props;
 
   const [txnError, setTxnError] = useState('');
@@ -1173,11 +1203,17 @@ function ProjectScreen(props) {
             </div>
             <input
               className="kasa-input"
-              placeholder="Kime ödendi ara..."
+              list="txn-party-list"
+              placeholder="Kime ödendi ara (yaz veya listeden seç)..."
               value={txnPartySearch}
               onChange={(e) => setTxnPartySearch(e.target.value)}
               style={{ marginBottom: 12 }}
             />
+            <datalist id="txn-party-list">
+              {[...new Set(txns.map((t) => t.party).filter(Boolean))].sort().map((p) => (
+                <option key={p} value={p} />
+              ))}
+            </datalist>
             <div>
               {(() => {
                 const search = txnPartySearch.trim().toLowerCase();
@@ -1202,6 +1238,7 @@ function ProjectScreen(props) {
                           </div>
                         </div>
                         <div className={`kasa-stamp ${t.type}`}>{t.type === 'gelir' ? '+' : '−'} {fmtMoney(t.amount)}</div>
+                        <button className="kasa-project-edit" title="Düzenle" onClick={() => onEditTxn(t)}>✎</button>
                         <button className="kasa-del" title="Sil" onClick={() => onDeleteTxn(t.id)}>✕</button>
                       </div>
                     ))}
@@ -1306,11 +1343,17 @@ function DebtListWithRates({ debts, debtPayments, installments, projects, rates,
       </div>
       <input
         className="kasa-input"
-        placeholder="Kimden/kime ara..."
+        list="debt-party-list"
+        placeholder="Kimden/kime ara (yaz veya listeden seç)..."
         value={partySearch}
         onChange={(e) => setPartySearch(e.target.value)}
         style={{ marginBottom: 12 }}
       />
+      <datalist id="debt-party-list">
+        {[...new Set(debts.map((d) => d.party).filter(Boolean))].sort().map((p) => (
+          <option key={p} value={p} />
+        ))}
+      </datalist>
       <div>
         {searchedDebts.length === 0 ? (
           <div className="kasa-empty">{search ? 'Bu aramaya uyan borç yok.' : 'Henüz borç kaydı yok.'}</div>
@@ -1785,6 +1828,69 @@ function EditDebtModal({ debt, onClose, onSave }) {
             if (!party) { setError('Kimden/kime bilgisini girin.'); return; }
             setError('');
             const ok = await onSave({ type, amount, currency, party, desc, date });
+            if (!ok) setError('Kaydedilemedi, tekrar deneyin.');
+          }}
+        >
+          Kaydet
+        </button>
+        <button className="kasa-link" onClick={onClose}>Vazgeç</button>
+      </div>
+    </div>
+  );
+}
+
+function EditTxnModal({ txn, banks, onClose, onSave }) {
+  const [error, setError] = useState('');
+  const [type, setType] = useState(txn.type);
+  return (
+    <div className="kasa-modal-overlay">
+      <div className="kasa-auth-card" style={{ maxWidth: 420 }}>
+        <h1>Hareketi Düzenle</h1>
+        <div className="kasa-toggle">
+          <button className={`gelir ${type === 'gelir' ? 'active gelir' : ''}`} onClick={() => setType('gelir')}>+ Gelir</button>
+          <button className={`gider ${type === 'gider' ? 'active gider' : ''}`} onClick={() => setType('gider')}>− Gider</button>
+        </div>
+        <label className="kasa-field">Tutar (₺)</label>
+        <input className="kasa-input" id="et-amount" type="number" min="0" step="0.01" defaultValue={txn.amount} />
+        {type === 'gider' ? (
+          <>
+            <label className="kasa-field">Kime</label>
+            <input className="kasa-input" id="et-party" defaultValue={txn.party || ''} placeholder="Örn. Ahmet Usta / Belediye" />
+            <label className="kasa-field">Banka</label>
+            <select className="kasa-select" id="et-bank" defaultValue={txn.bank || (banks.find((b) => b.name === 'Nakit') ? 'Nakit' : '')}>
+              {banks.map((b) => <option key={b.id} value={b.name}>{b.name}</option>)}
+            </select>
+          </>
+        ) : (
+          <>
+            <label className="kasa-field">Kategori</label>
+            <select className="kasa-select" id="et-cat" defaultValue={txn.category || CATS_GELIR[0]}>
+              {CATS_GELIR.map((c) => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </>
+        )}
+        <label className="kasa-field">Açıklama</label>
+        <input className="kasa-input" id="et-desc" defaultValue={txn.description || ''} placeholder="Örn. Ocak ayı kira" />
+        <label className="kasa-field">Tarih</label>
+        <input className="kasa-input" id="et-date" type="date" defaultValue={txn.txn_date} />
+        {error && <div className="kasa-error">{error}</div>}
+        <button
+          className="kasa-save"
+          onClick={async () => {
+            const amount = parseFloat(document.getElementById('et-amount').value);
+            const desc = document.getElementById('et-desc').value.trim();
+            const date = document.getElementById('et-date').value || txn.txn_date;
+            if (!amount || amount <= 0) { setError('Geçerli bir tutar girin.'); return; }
+            let category = null, party = null, bank = null;
+            if (type === 'gider') {
+              party = document.getElementById('et-party').value.trim();
+              bank = document.getElementById('et-bank').value;
+              if (!party) { setError('Kime ödendiğini girin.'); return; }
+            } else {
+              category = document.getElementById('et-cat').value;
+            }
+            setError('');
+            const ok = await onSave({ type, amount, category, party, bank, desc, date });
             if (!ok) setError('Kaydedilemedi, tekrar deneyin.');
           }}
         >
