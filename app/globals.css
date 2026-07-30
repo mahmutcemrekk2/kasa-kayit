@@ -126,6 +126,8 @@ html, body{margin:0; padding:0;}
     display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap;
   }
   .kasa-project-card:hover{ outline: 2px solid var(--gold); }
+  .kasa-project-card[draggable="true"]{ cursor: grab; }
+  .kasa-project-card.dragging{ opacity: 0.4; }
   .kasa-project-name{ font-family:'Fraunces', serif; font-weight:600; font-size:17px; margin:0 0 6px; }
   .kasa-project-bal{ font-family:'IBM Plex Mono', monospace; font-weight:600; font-size:22px; white-space:nowrap; }
   .kasa-project-meta{ font-family:'IBM Plex Mono', monospace; font-size:11px; color:var(--ink-soft); margin:0; }
@@ -147,6 +149,11 @@ html, body{margin:0; padding:0;}
     cursor:pointer; font-size:16px; padding:4px;
   }
   .kasa-project-del:hover{ color: var(--expense); }
+  .kasa-project-edit{
+    background:none;border:none;color:var(--ink-soft);
+    cursor:pointer; font-size:16px; padding:4px;
+  }
+  .kasa-project-edit:hover{ color: var(--gold); }
   .kasa-general-tag{
     font-family:'IBM Plex Mono', monospace; font-size:9px; font-weight:700; letter-spacing:0.08em;
     color: var(--gold); border: 1px solid var(--gold); border-radius: 999px; padding: 2px 7px;

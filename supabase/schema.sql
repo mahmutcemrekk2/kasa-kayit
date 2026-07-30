@@ -17,8 +17,17 @@ create table if not exists kasa_projects (
   id text primary key,
   name text not null,
   is_general boolean not null default false,
+  sort_order integer,
   created_at timestamptz not null default now()
 );
+
+alter table kasa_projects add column if not exists sort_order integer;
+
+update kasa_projects
+set sort_order = (extract(epoch from created_at))::bigint
+where sort_order is null;
+
+create unique index if not exists kasa_projects_name_lower_idx on kasa_projects (lower(name));
 
 create table if not exists kasa_transactions (
   id text primary key,
@@ -27,10 +36,23 @@ create table if not exists kasa_transactions (
   amount numeric not null,
   category text,
   description text,
+  bank text,
   txn_date date not null,
   added_by text,
   created_at timestamptz not null default now()
 );
+
+alter table kasa_transactions add column if not exists bank text;
+
+create table if not exists kasa_banks (
+  id text primary key,
+  name text not null unique,
+  created_at timestamptz not null default now()
+);
+
+insert into kasa_banks (id, name)
+values ('__nakit__', 'Nakit'), ('__kuveyt__', 'Kuveyt'), ('__akbank__', 'Akbank'), ('__enpara__', 'En Para'), ('__cepten__', 'Cepten')
+on conflict (name) do nothing;
 
 create table if not exists kasa_debts (
   id text primary key,
@@ -104,6 +126,7 @@ alter table kasa_transactions enable row level security;
 alter table kasa_debts enable row level security;
 alter table kasa_debt_payments enable row level security;
 alter table kasa_debt_installments enable row level security;
+alter table kasa_banks enable row level security;
 alter table kasa_rates enable row level security;
 
 drop policy if exists "allow all kasa_settings" on kasa_settings;
@@ -123,6 +146,9 @@ create policy "allow all kasa_debt_payments" on kasa_debt_payments for all using
 
 drop policy if exists "allow all kasa_debt_installments" on kasa_debt_installments;
 create policy "allow all kasa_debt_installments" on kasa_debt_installments for all using (true) with check (true);
+
+drop policy if exists "allow all kasa_banks" on kasa_banks;
+create policy "allow all kasa_banks" on kasa_banks for all using (true) with check (true);
 
 drop policy if exists "allow all kasa_rates" on kasa_rates;
 create policy "allow all kasa_rates" on kasa_rates for all using (true) with check (true);

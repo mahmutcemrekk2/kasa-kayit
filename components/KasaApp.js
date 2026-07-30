@@ -20,6 +20,18 @@ import {
   buildInstallmentAmounts,
 } from '../lib/supabaseClient';
 
+const SESSION_KEY = 'kasa_current_user';
+
+function saveSession(name) {
+  try { window.localStorage.setItem(SESSION_KEY, name); } catch (e) { /* localStorage kapalı olabilir */ }
+}
+function readSession() {
+  try { return window.localStorage.getItem(SESSION_KEY); } catch (e) { return null; }
+}
+function clearSession() {
+  try { window.localStorage.removeItem(SESSION_KEY); } catch (e) { /* localStorage kapalı olabilir */ }
+}
+
 const CATS_GELIR = ['Satış', 'Hizmet', 'Diğer Gelir'];
 const CATS_GIDER = ['Kira', 'Fatura', 'Malzeme/Stok', 'Maaş', 'Nakliye', 'Diğer Gider'];
 
@@ -33,6 +45,7 @@ export default function KasaApp() {
   const [debts, setDebts] = useState([]);
   const [debtPayments, setDebtPayments] = useState([]);
   const [installments, setInstallments] = useState([]);
+  const [banks, setBanks] = useState([]);
   const [paymentDebtId, setPaymentDebtId] = useState(null);
   const [rates, setRates] = useState(null);
   const [ratesLoading, setRatesLoading] = useState(false);
@@ -49,6 +62,7 @@ export default function KasaApp() {
   const [debtFilter, setDebtFilter] = useState('all');
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [newProjectOpen, setNewProjectOpen] = useState(false);
+  const [editProjectTarget, setEditProjectTarget] = useState(null);
   const [confirmModal, setConfirmModal] = useState(null); // { message, onYes }
 
   useEffect(() => {
@@ -78,6 +92,9 @@ export default function KasaApp() {
       const { data: installmentRows, error: instErr } = await supabase.from('kasa_debt_installments').select('*');
       if (instErr) throw instErr;
 
+      const { data: bankRows, error: bankErr } = await supabase.from('kasa_banks').select('*').order('name', { ascending: true });
+      if (bankErr) throw bankErr;
+
       const { data: rateRow, error: rErr } = await supabase.from('kasa_rates').select('*').eq('id', 1).maybeSingle();
       if (rErr) throw rErr;
 
@@ -94,8 +111,17 @@ export default function KasaApp() {
       setDebts(debtRows || []);
       setDebtPayments(paymentRows || []);
       setInstallments(installmentRows || []);
+      setBanks(bankRows || []);
       setRates(rateRow || null);
       setView(settingsRow ? 'login' : 'setup');
+
+      if (settingsRow) {
+        const savedUser = readSession();
+        if (savedUser && (savedUser === settingsRow.user1 || savedUser === settingsRow.user2)) {
+          setCurrentUser(savedUser);
+          setView('overview');
+        }
+      }
 
       const needsRefresh = !rateRow || (rateRow.fetched_date_str !== todayStr() && new Date().getHours() >= 10);
       if (needsRefresh) refreshRates();
@@ -139,11 +165,39 @@ export default function KasaApp() {
     return !error;
   }
 
+  function projectNameTaken(name, excludeId) {
+    const trimmed = name.trim().toLowerCase();
+    return projects.some((p) => p.id !== excludeId && p.name.trim().toLowerCase() === trimmed);
+  }
+
   async function addProject(name) {
-    const row = { id: uid(), name, is_general: false, created_at: new Date().toISOString() };
+    const trimmed = name.trim();
+    if (projectNameTaken(trimmed)) return { success: false, error: 'Bu isimde bir proje zaten var.' };
+    const maxOrder = projects.reduce((m, p) => Math.max(m, p.sort_order || 0), 0);
+    const row = { id: uid(), name: trimmed, is_general: false, sort_order: maxOrder + 1, created_at: new Date().toISOString() };
     const { error } = await supabase.from('kasa_projects').insert(row);
-    if (!error) setProjects((prev) => [...prev, row]);
-    return !error;
+    if (error) return { success: false, error: 'Kaydedilemedi, tekrar deneyin.' };
+    setProjects((prev) => [...prev, row]);
+    return { success: true };
+  }
+
+  async function updateProjectName(id, name) {
+    const trimmed = name.trim();
+    if (projectNameTaken(trimmed, id)) return { success: false, error: 'Bu isimde bir proje zaten var.' };
+    const { error } = await supabase.from('kasa_projects').update({ name: trimmed }).eq('id', id);
+    if (error) return { success: false, error: 'Kaydedilemedi, tekrar deneyin.' };
+    setProjects((prev) => prev.map((p) => (p.id === id ? { ...p, name: trimmed } : p)));
+    return { success: true };
+  }
+
+  async function reorderProjects(orderedIds) {
+    setProjects((prev) => {
+      const orderMap = new Map(orderedIds.map((id, i) => [id, i + 1]));
+      return prev.map((p) => (orderMap.has(p.id) ? { ...p, sort_order: orderMap.get(p.id) } : p));
+    });
+    await Promise.all(
+      orderedIds.map((id, i) => supabase.from('kasa_projects').update({ sort_order: i + 1 }).eq('id', id))
+    );
   }
 
   async function deleteProject(id) {
@@ -163,6 +217,7 @@ export default function KasaApp() {
       amount: entry.amount,
       category: entry.category,
       description: entry.desc,
+      bank: entry.bank || null,
       txn_date: entry.date,
       added_by: entry.addedBy,
       created_at: new Date().toISOString(),
@@ -170,6 +225,18 @@ export default function KasaApp() {
     const { error } = await supabase.from('kasa_transactions').insert(row);
     if (!error) setTxns((prev) => [...prev, row]);
     return !error;
+  }
+
+  async function addBank(name) {
+    const trimmed = name.trim();
+    if (!trimmed) return null;
+    const existing = banks.find((b) => b.name.toLowerCase() === trimmed.toLowerCase());
+    if (existing) return existing.name;
+    const row = { id: uid(), name: trimmed, created_at: new Date().toISOString() };
+    const { error } = await supabase.from('kasa_banks').insert(row);
+    if (error) return null;
+    setBanks((prev) => [...prev, row].sort((a, b) => a.name.localeCompare(b.name)));
+    return row.name;
   }
 
   async function deleteTxn(id) {
@@ -332,7 +399,7 @@ export default function KasaApp() {
       {view === 'login' && settings && (
         <LoginScreen
           settings={settings}
-          onLogin={(name) => { setCurrentUser(name); setView('overview'); }}
+          onLogin={(name) => { setCurrentUser(name); saveSession(name); setView('overview'); }}
         />
       )}
 
@@ -345,9 +412,11 @@ export default function KasaApp() {
           debtTotalsFor={debtTotalsFor}
           onOpenProject={(id) => { setActiveProjectId(id); setProjectTab('hareketler'); setFilter('all'); setView('project'); }}
           onGotoDebts={() => { setDebtFilter('all'); setView('debts'); }}
-          onLogout={() => { setCurrentUser(null); setView('login'); }}
+          onLogout={() => { setCurrentUser(null); clearSession(); setView('login'); }}
           onOpenSettings={() => setSettingsOpen(true)}
           onNewProject={() => setNewProjectOpen(true)}
+          onEditProject={(project) => setEditProjectTarget(project)}
+          onReorderProjects={reorderProjects}
           onDeleteProject={(id, name) => setConfirmModal({
             message: `"${name}" projesini ve tüm kayıtlarını silmek istediğinize emin misiniz?`,
             onYes: () => deleteProject(id),
@@ -367,6 +436,8 @@ export default function KasaApp() {
           debts={filteredDebts(activeProjectId)}
           debtPayments={debtPayments}
           installments={installments}
+          banks={banks}
+          onAddBank={addBank}
           filter={filter} setFilter={setFilter}
           formType={formType} setFormType={setFormType}
           projectTab={projectTab} setProjectTab={setProjectTab}
@@ -378,7 +449,7 @@ export default function KasaApp() {
           onRetryRates={async () => { await refreshRates(); setRateIssueAttempted(true); }}
           onCloseRateIssue={() => { setRateIssueDismissed(true); setRateIssueAttempted(false); }}
           onBack={() => setView('overview')}
-          onLogout={() => { setCurrentUser(null); setView('login'); }}
+          onLogout={() => { setCurrentUser(null); clearSession(); setView('login'); }}
           onAddTxn={async (entry) => { await addTxn({ ...entry, addedBy: currentUser }); }}
           onDeleteTxn={deleteTxn}
           onAddDebt={async (entry) => { await addDebt({ ...entry, projectId: activeProjectId, addedBy: currentUser }); }}
@@ -404,7 +475,7 @@ export default function KasaApp() {
           onRetryRates={async () => { await refreshRates(); setRateIssueAttempted(true); }}
           onCloseRateIssue={() => { setRateIssueDismissed(true); setRateIssueAttempted(false); }}
           onBack={() => setView('overview')}
-          onLogout={() => { setCurrentUser(null); setView('login'); }}
+          onLogout={() => { setCurrentUser(null); clearSession(); setView('login'); }}
           onAddDebt={async (entry) => { await addDebt({ ...entry, addedBy: currentUser }); }}
           onOpenPayments={setPaymentDebtId}
           onDeleteDebt={(id) => setConfirmModal({ message: 'Bu borç kaydını silmek istediğinize emin misiniz?', onYes: () => deleteDebt(id) })}
@@ -439,8 +510,8 @@ export default function KasaApp() {
             const ok = await saveSettings(s);
             if (ok) {
               setSettingsOpen(false);
-              if (currentUser === settings.user1) setCurrentUser(s.user1);
-              else if (currentUser === settings.user2) setCurrentUser(s.user2);
+              if (currentUser === settings.user1) { setCurrentUser(s.user1); saveSession(s.user1); }
+              else if (currentUser === settings.user2) { setCurrentUser(s.user2); saveSession(s.user2); }
             }
           }}
         />
@@ -449,7 +520,23 @@ export default function KasaApp() {
       {newProjectOpen && (
         <NewProjectModal
           onClose={() => setNewProjectOpen(false)}
-          onCreate={async (name) => { const ok = await addProject(name); if (ok) setNewProjectOpen(false); }}
+          onCreate={async (name) => {
+            const result = await addProject(name);
+            if (result.success) setNewProjectOpen(false);
+            return result;
+          }}
+        />
+      )}
+
+      {editProjectTarget && (
+        <EditProjectModal
+          project={editProjectTarget}
+          onClose={() => setEditProjectTarget(null)}
+          onSave={async (name) => {
+            const result = await updateProjectName(editProjectTarget.id, name);
+            if (result.success) setEditProjectTarget(null);
+            return result;
+          }}
         />
       )}
 
@@ -565,10 +652,26 @@ function LoginScreen({ settings, onLogin }) {
   );
 }
 
-function OverviewScreen({ settings, projects, currentUser, totalsFor, debtTotalsFor, onOpenProject, onGotoDebts, onLogout, onOpenSettings, onNewProject, onDeleteProject }) {
+function OverviewScreen({ settings, projects, currentUser, totalsFor, debtTotalsFor, onOpenProject, onGotoDebts, onLogout, onOpenSettings, onNewProject, onEditProject, onReorderProjects, onDeleteProject }) {
   const grand = totalsFor(null);
   const grandDebt = debtTotalsFor(null);
-  const sortedProjects = [...projects].sort((a, b) => (b.is_general ? 1 : 0) - (a.is_general ? 1 : 0));
+  const [draggedId, setDraggedId] = useState(null);
+  const sortedProjects = [...projects].sort((a, b) => {
+    if (a.is_general !== b.is_general) return a.is_general ? -1 : 1;
+    return (a.sort_order || 0) - (b.sort_order || 0) || a.created_at.localeCompare(b.created_at);
+  });
+
+  function handleDrop(targetId) {
+    if (!draggedId || draggedId === targetId) { setDraggedId(null); return; }
+    const orderable = sortedProjects.filter((p) => !p.is_general).map((p) => p.id);
+    const from = orderable.indexOf(draggedId);
+    const to = orderable.indexOf(targetId);
+    if (from === -1 || to === -1) { setDraggedId(null); return; }
+    orderable.splice(from, 1);
+    orderable.splice(to, 0, draggedId);
+    onReorderProjects(orderable);
+    setDraggedId(null);
+  }
 
   return (
     <div className="kasa-wrap">
@@ -636,9 +739,14 @@ function OverviewScreen({ settings, projects, currentUser, totalsFor, debtTotals
             return (
               <div
                 key={p.id}
-                className="kasa-project-card"
+                className={`kasa-project-card${draggedId === p.id ? ' dragging' : ''}`}
                 role="button"
                 tabIndex={0}
+                draggable={!p.is_general}
+                onDragStart={() => setDraggedId(p.id)}
+                onDragOver={(e) => { if (!p.is_general) e.preventDefault(); }}
+                onDrop={(e) => { e.preventDefault(); if (!p.is_general) handleDrop(p.id); }}
+                onDragEnd={() => setDraggedId(null)}
                 onClick={() => onOpenProject(p.id)}
                 onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpenProject(p.id); } }}
               >
@@ -658,13 +766,22 @@ function OverviewScreen({ settings, projects, currentUser, totalsFor, debtTotals
                 <div className="kasa-project-right">
                   <p className="kasa-project-bal" style={{ color: t.balance >= 0 ? 'var(--income)' : 'var(--expense)' }}>{fmtMoney(t.balance)}</p>
                   {!p.is_general && (
-                    <button
-                      className="kasa-project-del"
-                      title="Projeyi sil"
-                      onClick={(e) => { e.stopPropagation(); onDeleteProject(p.id, p.name); }}
-                    >
-                      ✕
-                    </button>
+                    <>
+                      <button
+                        className="kasa-project-edit"
+                        title="Proje adını düzenle"
+                        onClick={(e) => { e.stopPropagation(); onEditProject(p); }}
+                      >
+                        ✎
+                      </button>
+                      <button
+                        className="kasa-project-del"
+                        title="Projeyi sil"
+                        onClick={(e) => { e.stopPropagation(); onDeleteProject(p.id, p.name); }}
+                      >
+                        ✕
+                      </button>
+                    </>
                   )}
                 </div>
               </div>
@@ -817,6 +934,7 @@ function DebtForm({ projects, showProjectSelect, debtFormType, setDebtFormType, 
 function ProjectScreen(props) {
   const {
     settings, project, projects, currentUser, totals, debtTotals, txns, debts, debtPayments, installments,
+    banks, onAddBank,
     filter, setFilter, formType, setFormType, projectTab, setProjectTab,
     debtFormType, setDebtFormType, debtFilter, setDebtFilter,
     rates, ratesLoading, onRefreshRates, showRateIssue, rateIssueAttempted, onRetryRates, onCloseRateIssue,
@@ -824,6 +942,7 @@ function ProjectScreen(props) {
   } = props;
 
   const [txnError, setTxnError] = useState('');
+  const [addBankOpen, setAddBankOpen] = useState(false);
   if (!project) return null;
   const cats = formType === 'gelir' ? CATS_GELIR : CATS_GIDER;
 
@@ -911,6 +1030,28 @@ function ProjectScreen(props) {
               <select className="kasa-select" id="f-cat">
                 {cats.map((c) => <option key={c} value={c}>{c}</option>)}
               </select>
+              {formType === 'gider' && (
+                <>
+                  <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' }}>
+                    <label className="kasa-field" style={{ margin: '10px 0 5px' }}>Banka</label>
+                    <button
+                      type="button"
+                      className="kasa-link"
+                      style={{ margin: 0 }}
+                      onClick={() => setAddBankOpen(true)}
+                    >
+                      + Yeni Banka Ekle
+                    </button>
+                  </div>
+                  <select
+                    className="kasa-select"
+                    id="f-bank"
+                    defaultValue={banks.find((b) => b.name === 'Nakit') ? 'Nakit' : ''}
+                  >
+                    {banks.map((b) => <option key={b.id} value={b.name}>{b.name}</option>)}
+                  </select>
+                </>
+              )}
               <label className="kasa-field">Açıklama</label>
               <input className="kasa-input" id="f-desc" placeholder="Örn. Ocak ayı kira" />
               <label className="kasa-field">Tarih</label>
@@ -921,11 +1062,13 @@ function ProjectScreen(props) {
                 onClick={() => {
                   const amount = parseFloat(document.getElementById('f-amount').value);
                   const category = document.getElementById('f-cat').value;
+                  const bankSelect = document.getElementById('f-bank');
+                  const bank = formType === 'gider' && bankSelect ? bankSelect.value : null;
                   const desc = document.getElementById('f-desc').value.trim();
                   const date = document.getElementById('f-date').value || todayStr();
                   if (!amount || amount <= 0) { setTxnError('Geçerli bir tutar girin.'); return; }
                   setTxnError('');
-                  onAddTxn({ projectId: project.id, type: formType, amount, category, desc, date });
+                  onAddTxn({ projectId: project.id, type: formType, amount, category, bank, desc, date });
                   document.getElementById('f-amount').value = '';
                   document.getElementById('f-desc').value = '';
                 }}
@@ -951,7 +1094,9 @@ function ProjectScreen(props) {
                     <div className="kasa-row-date">{fmtDate(t.txn_date)}</div>
                     <div>
                       <div className="kasa-row-desc">{t.description || t.category}</div>
-                      <div className="kasa-row-cat">{t.category} · <span className="kasa-row-by">{t.added_by}</span></div>
+                      <div className="kasa-row-cat">
+                        {t.category}{t.bank ? ' · ' + t.bank : ''} · <span className="kasa-row-by">{t.added_by}</span>
+                      </div>
                     </div>
                     <div className={`kasa-stamp ${t.type}`}>{t.type === 'gelir' ? '+' : '−'} {fmtMoney(t.amount)}</div>
                     <button className="kasa-del" title="Sil" onClick={() => onDeleteTxn(t.id)}>✕</button>
@@ -961,6 +1106,20 @@ function ProjectScreen(props) {
             </div>
           </div>
         </div>
+      )}
+
+      {addBankOpen && (
+        <AddBankModal
+          onClose={() => setAddBankOpen(false)}
+          onCreate={async (name) => {
+            const created = await onAddBank(name);
+            setAddBankOpen(false);
+            if (created) {
+              const bankSelect = document.getElementById('f-bank');
+              if (bankSelect) bankSelect.value = created;
+            }
+          }}
+        />
       )}
     </div>
   );
@@ -1300,6 +1459,32 @@ function PaymentModal({ debt, payments, onAddPayment, onDeletePayment, onClose }
   );
 }
 
+function AddBankModal({ onClose, onCreate }) {
+  const [error, setError] = useState('');
+  return (
+    <div className="kasa-modal-overlay">
+      <div className="kasa-auth-card" style={{ maxWidth: 380 }}>
+        <h1>Yeni Banka</h1>
+        <p>Gider kayıtlarında seçilebilecek banka listesine eklenecek.</p>
+        <label className="kasa-field">Banka adı</label>
+        <input className="kasa-input" id="ab-name" placeholder="Örn. Ziraat Bankası" />
+        {error && <div className="kasa-error">{error}</div>}
+        <button
+          className="kasa-save"
+          onClick={() => {
+            const name = document.getElementById('ab-name').value.trim();
+            if (!name) { setError('Banka adı girin.'); return; }
+            onCreate(name);
+          }}
+        >
+          Ekle
+        </button>
+        <button className="kasa-link" onClick={onClose}>Vazgeç</button>
+      </div>
+    </div>
+  );
+}
+
 function NewProjectModal({ onClose, onCreate }) {
   const [error, setError] = useState('');
   return (
@@ -1312,13 +1497,40 @@ function NewProjectModal({ onClose, onCreate }) {
         {error && <div className="kasa-error">{error}</div>}
         <button
           className="kasa-save"
-          onClick={() => {
+          onClick={async () => {
             const name = document.getElementById('np-name').value.trim();
             if (!name) { setError('Proje adı girin.'); return; }
-            onCreate(name);
+            const result = await onCreate(name);
+            if (result && !result.success) setError(result.error || 'Kaydedilemedi.');
           }}
         >
           Oluştur
+        </button>
+        <button className="kasa-link" onClick={onClose}>Vazgeç</button>
+      </div>
+    </div>
+  );
+}
+
+function EditProjectModal({ project, onClose, onSave }) {
+  const [error, setError] = useState('');
+  return (
+    <div className="kasa-modal-overlay">
+      <div className="kasa-auth-card" style={{ maxWidth: 380 }}>
+        <h1>Proje Adını Düzenle</h1>
+        <label className="kasa-field">Proje adı</label>
+        <input className="kasa-input" id="ep-name" defaultValue={project.name} placeholder="Örn. İnşaat İşi, Şube 2" />
+        {error && <div className="kasa-error">{error}</div>}
+        <button
+          className="kasa-save"
+          onClick={async () => {
+            const name = document.getElementById('ep-name').value.trim();
+            if (!name) { setError('Proje adı girin.'); return; }
+            const result = await onSave(name);
+            if (result && !result.success) setError(result.error || 'Kaydedilemedi.');
+          }}
+        >
+          Kaydet
         </button>
         <button className="kasa-link" onClick={onClose}>Vazgeç</button>
       </div>
