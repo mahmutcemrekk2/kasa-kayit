@@ -1,0 +1,317 @@
+*{box-sizing:border-box;}
+html, body{margin:0; padding:0;}
+
+  :root{
+    --bg-deep: #142621;
+    --paper: #f4efe1;
+    --paper-2: #eae2cd;
+    --ink: #22281f;
+    --ink-soft: #55584c;
+    --income: #2f6f4e;
+    --income-soft: #e2ede4;
+    --expense: #a83a2c;
+    --expense-soft: #f3e2dd;
+    --gold: #c9a227;
+    --line: #d8cfb4;
+    --radius: 4px;
+  }
+  #kasa-app{
+    font-family:'Inter', sans-serif;
+    color: var(--ink);
+    background:
+      radial-gradient(circle at 15% 0%, #1c352d 0%, transparent 45%),
+      var(--bg-deep);
+    min-height: 100vh;
+    padding: 28px 16px 60px;
+  }
+  .kasa-wrap{ max-width: 1040px; margin: 0 auto; }
+  .kasa-h1{
+    font-family:'Fraunces', serif;
+    font-weight:700;
+    font-size: clamp(26px, 4vw, 38px);
+    color: var(--paper);
+    letter-spacing: -0.01em;
+    margin: 0;
+  }
+  .kasa-sub{
+    font-family:'IBM Plex Mono', monospace;
+    color: #a9c3b7;
+    font-size: 12px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    margin-top: 4px;
+  }
+  .kasa-topbar{
+    display:flex; justify-content:space-between; align-items:flex-end; flex-wrap:wrap; gap:12px;
+    margin-bottom: 22px;
+  }
+  .kasa-user-chip{
+    font-family:'IBM Plex Mono', monospace;
+    background: rgba(244,239,225,0.08);
+    border: 1px solid rgba(244,239,225,0.25);
+    color: var(--paper);
+    padding: 8px 14px;
+    border-radius: 999px;
+    font-size: 13px;
+    display:flex; align-items:center; gap:10px;
+  }
+  .kasa-user-chip button{
+    background:none; border:none; color:#a9c3b7; cursor:pointer; font-size:12px;
+    text-decoration:underline; font-family:'IBM Plex Mono', monospace; padding:0;
+  }
+  .kasa-back{
+    background:none;border:none;color:#a9c3b7;cursor:pointer;font-family:'IBM Plex Mono', monospace;
+    font-size:12px;text-decoration:underline;padding:0;margin-bottom:10px;
+  }
+
+  .kasa-stats{
+    display:grid; grid-template-columns: 1.3fr 1fr 1fr; gap:14px; margin-bottom: 22px;
+  }
+  @media (max-width: 680px){ .kasa-stats{ grid-template-columns: 1fr; } }
+  .kasa-stat{
+    background: var(--paper);
+    border-radius: var(--radius);
+    padding: 20px 22px;
+    position: relative;
+    overflow:hidden;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.25);
+  }
+  .kasa-stat.main{ background: linear-gradient(160deg, #fbf7ea, var(--paper)); }
+  .kasa-stat-label{
+    font-family:'IBM Plex Mono', monospace;
+    font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase;
+    color: var(--ink-soft); margin:0 0 8px;
+  }
+  .kasa-stat-value{
+    font-family:'IBM Plex Mono', monospace;
+    font-weight: 600;
+    font-size: clamp(20px, 3.2vw, 30px);
+    margin:0;
+  }
+  .kasa-stat.income .kasa-stat-value{ color: var(--income); }
+  .kasa-stat.expense .kasa-stat-value{ color: var(--expense); }
+  .kasa-seal{
+    position:absolute; right: -10px; top: -10px;
+    width:74px; height:74px; border-radius:50%;
+    border: 2.5px dashed var(--gold);
+    opacity: 0.35;
+    transform: rotate(-10deg);
+  }
+
+  .kasa-section-head{
+    display:flex; justify-content:space-between; align-items:center; margin: 26px 0 12px;
+  }
+  .kasa-section-head h2{
+    font-family:'Fraunces', serif; color: var(--paper); font-size: 20px; margin:0;
+  }
+  .kasa-add-project{
+    padding: 8px 16px; border-radius: 999px; border: 1.5px solid var(--gold); background: transparent;
+    color: var(--gold); font-family:'IBM Plex Mono', monospace; font-size:12px; cursor:pointer; font-weight:600;
+  }
+  .kasa-orphan-banner{
+    background: var(--expense-soft); border: 1.5px solid var(--expense); border-radius: var(--radius);
+    padding: 14px 18px; margin-bottom: 16px; display:flex; justify-content:space-between; align-items:center;
+    gap:14px; flex-wrap:wrap; font-size:13px; color: var(--ink);
+  }
+  .kasa-orphan-clear{
+    background: var(--expense); color:white; border:none; border-radius: var(--radius); padding:8px 14px;
+    font-family:'IBM Plex Mono', monospace; font-size:12px; font-weight:600; cursor:pointer; white-space:nowrap;
+  }
+
+  .kasa-projects-grid{ display:flex; flex-direction:column; gap:12px; }
+  .kasa-project-card{
+    background: var(--paper); border-radius: var(--radius); padding: 18px 22px;
+    box-shadow: 0 10px 26px rgba(0,0,0,0.22); cursor:pointer; text-align:left; border:none;
+    font-family:'Inter', sans-serif; position:relative;
+    display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap;
+  }
+  .kasa-project-card:hover{ outline: 2px solid var(--gold); }
+  .kasa-project-name{ font-family:'Fraunces', serif; font-weight:600; font-size:17px; margin:0 0 6px; }
+  .kasa-project-bal{ font-family:'IBM Plex Mono', monospace; font-weight:600; font-size:22px; white-space:nowrap; }
+  .kasa-project-meta{ font-family:'IBM Plex Mono', monospace; font-size:11px; color:var(--ink-soft); margin:0; }
+  .kasa-project-debt{
+    font-family:'IBM Plex Mono', monospace; font-size:11px; color:var(--expense); font-weight:600;
+    margin: 4px 0 0;
+  }
+  .kasa-project-debt-banner{
+    background: var(--expense-soft); border: 1.5px solid var(--expense); border-radius: var(--radius);
+    padding: 10px 16px; margin-bottom: 18px; display:flex; align-items:center; gap:18px; flex-wrap:wrap;
+    font-size:13px; color: var(--ink);
+  }
+  .kasa-project-debt-banner strong{ font-family:'IBM Plex Mono', monospace; }
+  .kasa-project-debt-banner .kasa-link{ margin-left:auto; margin-top:0; color: var(--expense); }
+  .kasa-project-left{ min-width:0; }
+  .kasa-project-right{ display:flex; align-items:center; gap:18px; }
+  .kasa-project-del{
+    background:none;border:none;color:var(--ink-soft);
+    cursor:pointer; font-size:16px; padding:4px;
+  }
+  .kasa-project-del:hover{ color: var(--expense); }
+  .kasa-general-tag{
+    font-family:'IBM Plex Mono', monospace; font-size:9px; font-weight:700; letter-spacing:0.08em;
+    color: var(--gold); border: 1px solid var(--gold); border-radius: 999px; padding: 2px 7px;
+    vertical-align: middle; margin-left: 6px;
+  }
+  .kasa-empty-proj{ color:#a9c3b7; font-family:'IBM Plex Mono', monospace; font-size:13px; padding: 20px 0;}
+
+  .kasa-grid{ display:grid; grid-template-columns: 340px 1fr; gap: 18px; align-items:start; }
+  @media (max-width: 820px){ .kasa-grid{ grid-template-columns: 1fr; } }
+
+  .kasa-panel{
+    background: var(--paper);
+    border-radius: var(--radius);
+    padding: 20px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.22);
+  }
+  .kasa-panel h2{
+    font-family:'Fraunces', serif; font-size: 18px; margin: 0 0 16px;
+    display:flex; align-items:center; gap:8px;
+  }
+
+  .kasa-fis{
+    border: 1.5px dashed var(--line);
+    border-radius: var(--radius);
+    padding: 16px;
+    background: repeating-linear-gradient(var(--paper), var(--paper) 27px, var(--paper-2) 28px);
+  }
+  .kasa-toggle{ display:flex; gap:8px; margin-bottom:14px; }
+  .kasa-toggle button{
+    flex:1; padding:9px 8px; border-radius: var(--radius); border:1.5px solid var(--line);
+    background: transparent; font-family:'IBM Plex Mono', monospace; font-size:13px;
+    cursor:pointer; font-weight:600; color: var(--ink-soft);
+    transition: all .15s ease;
+  }
+  .kasa-toggle button.active.gelir{ background: var(--income); border-color:var(--income); color:white; }
+  .kasa-toggle button.active.gider{ background: var(--expense); border-color:var(--expense); color:white; }
+  .kasa-toggle button.active.alinan{ background: var(--expense); border-color:var(--expense); color:white; }
+  .kasa-toggle button.active.verilen{ background: var(--income); border-color:var(--income); color:white; }
+
+  .kasa-tabs{ display:flex; gap:8px; margin-bottom:18px; }
+  .kasa-tabs button{
+    padding:8px 18px; border-radius:999px; border:1.5px solid rgba(244,239,225,0.3); background:transparent;
+    color:var(--paper); font-family:'IBM Plex Mono', monospace; font-size:12px; cursor:pointer; font-weight:600;
+  }
+  .kasa-tabs button.active{ background: var(--paper); color:var(--ink); border-color:var(--paper); }
+
+  .kasa-stamp.alinan{ color:var(--expense); border-color:var(--expense); background:var(--expense-soft); }
+  .kasa-stamp.verilen{ color:var(--income); border-color:var(--income); background:var(--income-soft); }
+  .kasa-stamp.two-line{ white-space:normal; text-align:right; line-height:1.4; }
+  .kasa-rates-bar{
+    display:flex; flex-wrap:wrap; gap:14px; align-items:center;
+    background: rgba(244,239,225,0.08); border:1px solid rgba(244,239,225,0.25); border-radius: var(--radius);
+    padding: 10px 16px; margin-bottom: 16px; font-family:'IBM Plex Mono', monospace; font-size:12px; color: var(--paper);
+  }
+  .kasa-rates-updated{ color:#a9c3b7; }
+  .kasa-rates-bar button{
+    margin-left:auto; padding:5px 12px; border-radius:999px; border:1.5px solid var(--gold); background:transparent;
+    color: var(--gold); font-family:'IBM Plex Mono', monospace; font-size:11px; cursor:pointer; font-weight:600;
+  }
+  .kasa-rates-bar button:disabled{ opacity:0.5; cursor:default; }
+  .kasa-paid-badge{
+    font-family:'IBM Plex Mono', monospace; font-size:10px; font-weight:700; letter-spacing:0.05em;
+    padding:2px 8px; border-radius:999px; border:1.5px solid; cursor:pointer; white-space:nowrap;
+  }
+  .kasa-paid-badge.paid{ color:var(--income); border-color:var(--income); background:var(--income-soft); }
+  .kasa-paid-badge.unpaid{ color:var(--ink-soft); border-color:var(--line); background:white; }
+  .kasa-paid-badge.partial{ color:var(--gold); border-color:var(--gold); background:#fbf3d9; }
+  .kasa-paid-badge.overdue{ color:white; border-color:var(--expense); background:var(--expense); }
+  .kasa-payment-summary{
+    display:flex; gap:16px; flex-wrap:wrap; font-size:13px; color:var(--ink-soft);
+    background: var(--paper-2); border-radius: var(--radius); padding: 10px 14px; margin: 4px 0 12px;
+  }
+  .kasa-payment-summary strong{ color:var(--ink); font-family:'IBM Plex Mono', monospace; }
+  .kasa-payment-list{ max-height: 220px; overflow-y:auto; margin-bottom: 10px; }
+  .kasa-payment-row{
+    display:grid; grid-template-columns: 70px 1fr 24px; gap:10px; align-items:center;
+    padding: 8px 2px; border-bottom: 1px solid var(--line); font-size:13px;
+  }
+  .kasa-payment-row:last-child{ border-bottom:none; }
+  .kasa-installment-row{
+    display:grid; grid-template-columns: 70px 1fr auto; gap:10px; align-items:center;
+    padding: 8px 2px; border-bottom: 1px solid var(--line); font-size:13px;
+  }
+  .kasa-installment-row:last-child{ border-bottom:none; }
+  .kasa-checkbox-row{
+    display:flex; align-items:center; gap:8px; margin: 14px 0 4px; font-size:13px;
+    color: var(--ink-soft); font-family:'IBM Plex Mono', monospace; cursor:pointer;
+  }
+  .kasa-checkbox-row input{ width:16px; height:16px; cursor:pointer; }
+  .kasa-debt-row{
+    display:grid; grid-template-columns: 78px 1fr auto auto 28px;
+    gap:10px; align-items:center;
+    padding: 12px 4px; border-bottom: 1px solid var(--line);
+  }
+  .kasa-debt-row:last-child{ border-bottom:none; }
+
+  label.kasa-field{ display:block; font-size:12px; color:var(--ink-soft); margin: 10px 0 5px; font-family:'IBM Plex Mono', monospace; letter-spacing:0.04em;}
+  .kasa-input, .kasa-select{
+    width:100%; padding:9px 10px; border-radius: var(--radius); border:1.5px solid var(--line);
+    font-family:'Inter', sans-serif; font-size:14px; background: white; color: var(--ink);
+  }
+  .kasa-input:focus, .kasa-select:focus{ outline:2px solid var(--gold); outline-offset:1px; }
+  .kasa-save{
+    width:100%; margin-top:16px; padding:11px; border:none; border-radius: var(--radius);
+    background: var(--ink); color: var(--paper); font-weight:600; cursor:pointer;
+    font-family:'IBM Plex Mono', monospace; letter-spacing:0.04em; font-size:13px;
+  }
+  .kasa-save:hover{ background:#000; }
+
+  .kasa-filters{ display:flex; gap:8px; margin-bottom:14px; flex-wrap:wrap; }
+  .kasa-filters button{
+    padding:6px 12px; border-radius:999px; border:1.5px solid var(--line); background:white;
+    font-size:12px; cursor:pointer; font-family:'IBM Plex Mono', monospace; color: var(--ink-soft);
+  }
+  .kasa-filters button.active{ background: var(--ink); color:var(--paper); border-color: var(--ink); }
+
+  .kasa-row{
+    display:grid; grid-template-columns: 86px 1fr auto 32px;
+    gap:12px; align-items:center;
+    padding: 12px 4px; border-bottom: 1px solid var(--line);
+  }
+  .kasa-row:last-child{ border-bottom:none; }
+  .kasa-row-date{ font-family:'IBM Plex Mono', monospace; font-size:12px; color:var(--ink-soft); }
+  .kasa-row-desc{ font-size:14px; }
+  .kasa-row-cat{ font-size:11px; color:var(--ink-soft); text-transform:uppercase; letter-spacing:0.05em; }
+  .kasa-row-by{ font-size:11px; color:var(--ink-soft); }
+  .kasa-row-proj{ font-size:11px; color: var(--gold); font-weight:600; }
+  .kasa-stamp{
+    font-family:'IBM Plex Mono', monospace; font-weight:600; font-size:14px;
+    padding: 3px 10px; border-radius: 3px; border: 1.5px solid; white-space:nowrap;
+    transform: rotate(-3deg); display:inline-block;
+  }
+  .kasa-stamp.gelir{ color:var(--income); border-color:var(--income); background:var(--income-soft); }
+  .kasa-stamp.gider{ color:var(--expense); border-color:var(--expense); background:var(--expense-soft); }
+  .kasa-del{
+    background:none; border:none; color:var(--ink-soft); cursor:pointer; font-size:16px;
+  }
+  .kasa-del:hover{ color: var(--expense); }
+  .kasa-empty{ text-align:center; padding: 30px 10px; color: var(--ink-soft); font-size:14px; }
+
+  .kasa-center{
+    min-height: 70vh; display:flex; align-items:center; justify-content:center;
+  }
+  .kasa-modal-overlay{
+    position: fixed; inset: 0; z-index: 1000;
+    background: rgba(10,16,13,0.62);
+    display:flex; align-items:center; justify-content:center;
+    padding: 20px; overflow-y: auto;
+  }
+  .kasa-modal-overlay .kasa-auth-card{ max-height: 90vh; overflow-y: auto; }
+  .kasa-auth-card{
+    background: var(--paper); border-radius: var(--radius); padding: 32px; max-width: 380px; width:100%;
+    box-shadow: 0 20px 50px rgba(0,0,0,0.35);
+  }
+  .kasa-auth-card h1{ font-family:'Fraunces', serif; font-size:24px; margin: 0 0 6px; }
+  .kasa-auth-card p{ color: var(--ink-soft); font-size:13px; margin: 0 0 20px; }
+  .kasa-name-btn{
+    display:block; width:100%; text-align:left; padding: 12px 14px; margin-bottom:10px;
+    border: 1.5px solid var(--line); border-radius: var(--radius); background:white;
+    font-family:'Inter', sans-serif; font-size:15px; cursor:pointer; font-weight:500;
+  }
+  .kasa-name-btn:hover{ border-color: var(--gold); }
+  .kasa-error{ color: var(--expense); font-size:12px; margin-top:8px; }
+  .kasa-loading{ color: var(--paper); font-family:'IBM Plex Mono', monospace; text-align:center; padding: 60px 0; }
+  .kasa-link{ display:block; background:none; border:none; text-decoration:underline; cursor:pointer; color: var(--ink-soft); font-size:12px; font-family:'IBM Plex Mono', monospace; padding:0; margin-top: 14px; }
+
+  .kasa-settings-row{ display:flex; gap:8px; margin-bottom:10px; }
+  .kasa-settings-row .kasa-input{ flex:1; }
