@@ -227,6 +227,11 @@ html, body{margin:0; padding:0;}
     background: var(--paper-2); border-radius: var(--radius); padding: 10px 14px; margin: 4px 0 12px;
   }
   .kasa-payment-summary strong{ color:var(--ink); font-family:'IBM Plex Mono', monospace; }
+  .kasa-search-total{
+    display:flex; gap:16px; flex-wrap:wrap; font-size:13px; color:var(--ink-soft);
+    background: var(--paper-2); border-radius: var(--radius); padding: 10px 14px; margin-top: 12px;
+  }
+  .kasa-search-total strong{ color:var(--ink); font-family:'IBM Plex Mono', monospace; }
   .kasa-payment-list{ max-height: 220px; overflow-y:auto; margin-bottom: 10px; }
   .kasa-payment-row{
     display:grid; grid-template-columns: 70px 1fr auto 24px; gap:10px; align-items:center;

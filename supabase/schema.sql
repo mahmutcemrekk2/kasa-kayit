@@ -43,6 +43,7 @@ create table if not exists kasa_transactions (
 );
 
 alter table kasa_transactions add column if not exists bank text;
+alter table kasa_transactions add column if not exists party text;
 
 create table if not exists kasa_banks (
   id text primary key,
@@ -65,8 +66,13 @@ create table if not exists kasa_debts (
   debt_date date not null,
   paid boolean not null default false,
   added_by text,
+  rate_snapshot numeric,
+  principal_amount numeric,
   created_at timestamptz not null default now()
 );
+
+alter table kasa_debts add column if not exists rate_snapshot numeric;
+alter table kasa_debts add column if not exists principal_amount numeric;
 
 create table if not exists kasa_debt_payments (
   id text primary key,

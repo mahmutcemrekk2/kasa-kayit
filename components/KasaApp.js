@@ -12,6 +12,7 @@ import {
   currencyMeta,
   invalidRateKeys,
   debtTRYValue,
+  debtTRYValueLive,
   debtPaidAmount,
   debtRemaining,
   isDebtSettled,
@@ -33,7 +34,6 @@ function clearSession() {
 }
 
 const CATS_GELIR = ['Satış', 'Hizmet', 'Diğer Gelir'];
-const CATS_GIDER = ['Kira', 'Fatura', 'Malzeme/Stok', 'Maaş', 'Nakliye', 'Diğer Gider'];
 
 export default function KasaApp() {
   const [loading, setLoading] = useState(true);
@@ -218,6 +218,7 @@ export default function KasaApp() {
       amount: entry.amount,
       category: entry.category,
       description: entry.desc,
+      party: entry.party || null,
       bank: entry.bank || null,
       txn_date: entry.date,
       added_by: entry.addedBy,
@@ -257,6 +258,8 @@ export default function KasaApp() {
       debt_date: entry.date,
       paid: false,
       added_by: entry.addedBy,
+      rate_snapshot: entry.rateSnapshot ?? null,
+      principal_amount: entry.principalAmount ?? null,
       created_at: new Date().toISOString(),
     };
     const { error } = await supabase.from('kasa_debts').insert(row);
@@ -357,7 +360,7 @@ export default function KasaApp() {
       if (projectId !== null && d.project_id !== projectId) continue;
       const remaining = debtRemaining(d, debtPayments, installments);
       if (remaining <= 0) continue;
-      const val = debtTRYValue({ amount: remaining, currency: d.currency }, rates);
+      const val = debtTRYValue({ amount: remaining, currency: d.currency, rate_snapshot: d.rate_snapshot }, rates);
       if (d.type === 'alinan') alinan += val; else verilen += val;
     }
     return { alinan, verilen, net: alinan - verilen };
@@ -377,6 +380,7 @@ export default function KasaApp() {
       .sort((a, b) => b.debt_date.localeCompare(a.debt_date) || new Date(b.created_at) - new Date(a.created_at));
     if (debtFilter === 'all') return sorted;
     if (debtFilter === 'odenmemis') return sorted.filter((d) => !isDebtSettled(d, debtPayments, installments));
+    if (debtFilter === 'taksitli') return sorted.filter((d) => debtInstallmentsFor(d, installments).length > 0);
     return sorted.filter((d) => d.type === debtFilter);
   }
 
@@ -519,6 +523,7 @@ export default function KasaApp() {
         <PaymentModal
           debt={debts.find((d) => d.id === paymentDebtId)}
           payments={debtPayments.filter((p) => p.debt_id === paymentDebtId)}
+          rates={rates}
           onAddPayment={async (amount, date, desc) => { await addDebtPayment({ debtId: paymentDebtId, amount, date, desc, addedBy: currentUser }); }}
           onEditPayment={updateDebtPayment}
           onDeletePayment={(id) => setConfirmModal({ message: 'Bu ödeme kaydını silmek istediğinize emin misiniz?', onYes: () => deleteDebtPayment(id) })}
@@ -883,9 +888,14 @@ function RateIssueModal({ rates, attempted, onRetry, onClose, loading }) {
   );
 }
 
-function DebtForm({ projects, showProjectSelect, debtFormType, setDebtFormType, onAdd }) {
+function DebtForm({ projects, showProjectSelect, debtFormType, setDebtFormType, rates, onAdd }) {
   const [error, setError] = useState('');
   const [installmentOn, setInstallmentOn] = useState(false);
+  const [currency, setCurrency] = useState('TRY');
+  const [date, setDate] = useState(todayStr());
+  const isForeign = currency !== 'TRY';
+  const liveRate = rates ? rates[currency.toLowerCase()] : null;
+
   return (
     <div className="kasa-panel">
       <h2>Borç Ekle</h2>
@@ -905,21 +915,29 @@ function DebtForm({ projects, showProjectSelect, debtFormType, setDebtFormType, 
           </>
         )}
         <label className="kasa-field">Para Birimi</label>
-        <select className="kasa-select" id="d-currency" onChange={(e) => {
-          const label = document.getElementById('d-amount-label');
-          const meta = CURRENCIES[e.target.value];
-          if (label) label.textContent = meta.unit ? `Tutar (${meta.unit})` : 'Tutar';
-        }}>
+        <select className="kasa-select" id="d-currency" value={currency} onChange={(e) => setCurrency(e.target.value)}>
           {Object.entries(CURRENCIES).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
         </select>
-        <label className="kasa-field" id="d-amount-label">Tutar</label>
+        <label className="kasa-field">{CURRENCIES[currency].unit ? `Tutar (${CURRENCIES[currency].unit})` : 'Tutar'}</label>
         <input className="kasa-input" id="d-amount" type="number" min="0" step="0.01" placeholder="0.00" />
         <label className="kasa-field">{debtFormType === 'alinan' ? 'Kimden alındı' : 'Kime verildi'}</label>
         <input className="kasa-input" id="d-party" placeholder="Örn. Ahmet Usta / Banka" />
         <label className="kasa-field">Açıklama</label>
         <input className="kasa-input" id="d-desc" placeholder="Örn. Malzeme avansı" />
         <label className="kasa-field">Tarih</label>
-        <input className="kasa-input" id="d-date" type="date" defaultValue={todayStr()} />
+        <input className="kasa-input" id="d-date" type="date" value={date} onChange={(e) => setDate(e.target.value || todayStr())} />
+
+        {isForeign && (
+          <>
+            <label className="kasa-field">Kur (₺) — opsiyonel</label>
+            <input className="kasa-input" id="d-rate" type="number" min="0" step="0.0001" placeholder={liveRate ? String(liveRate) : '0.00'} />
+            <p style={{ fontSize: 11, color: 'var(--ink-soft)', margin: '4px 0 0' }}>
+              {date === todayStr()
+                ? 'Boş bırakırsan bugünün güncel kuru otomatik kaydedilir ve bu borç için bir daha değişmez.'
+                : 'Geçmiş tarihli borç: o günün kurunu biliyorsan buraya elle gir, bilmiyorsan boş bırak (güncel kur kullanılır).'}
+            </p>
+          </>
+        )}
 
         <label className="kasa-checkbox-row">
           <input type="checkbox" id="d-installment-on" checked={installmentOn} onChange={(e) => setInstallmentOn(e.target.checked)} />
@@ -931,6 +949,11 @@ function DebtForm({ projects, showProjectSelect, debtFormType, setDebtFormType, 
             <input className="kasa-input" id="d-installment-count" type="number" min="2" step="1" placeholder="Örn. 12" />
             <label className="kasa-field">İlk Taksit Tarihi</label>
             <input className="kasa-input" id="d-installment-date" type="date" defaultValue={todayStr()} />
+            <label className="kasa-field">Ana Para — opsiyonel</label>
+            <input className="kasa-input" id="d-principal" type="number" min="0" step="0.01" placeholder="Faizsiz asıl tutar" />
+            <p style={{ fontSize: 11, color: 'var(--ink-soft)', margin: '4px 0 0' }}>
+              Girersen, toplam tutar ile ana para arasındaki fark faiz olarak gösterilir.
+            </p>
           </>
         )}
 
@@ -939,26 +962,41 @@ function DebtForm({ projects, showProjectSelect, debtFormType, setDebtFormType, 
           className="kasa-save"
           onClick={() => {
             const amount = parseFloat(document.getElementById('d-amount').value);
-            const currency = document.getElementById('d-currency').value;
             const party = document.getElementById('d-party').value.trim();
             const desc = document.getElementById('d-desc').value.trim();
-            const date = document.getElementById('d-date').value || todayStr();
             const projSelect = document.getElementById('d-project');
             if (!amount || amount <= 0) { setError('Geçerli bir tutar girin.'); return; }
             if (!party) { setError('Kimden/kime bilgisini girin.'); return; }
+
+            let rateSnapshot = null;
+            if (isForeign) {
+              const manualRate = parseFloat(document.getElementById('d-rate')?.value);
+              if (!isNaN(manualRate) && manualRate > 0) rateSnapshot = manualRate;
+              else if (date === todayStr() && liveRate) rateSnapshot = Number(liveRate);
+            }
+
             let installmentCount = null;
             let firstDueDate = null;
+            let principalAmount = null;
             if (installmentOn) {
               installmentCount = parseInt(document.getElementById('d-installment-count').value, 10);
               firstDueDate = document.getElementById('d-installment-date').value || todayStr();
               if (!installmentCount || installmentCount < 2) { setError('Taksit sayısı en az 2 olmalı.'); return; }
+              const principalInput = parseFloat(document.getElementById('d-principal')?.value);
+              if (!isNaN(principalInput) && principalInput > 0) principalAmount = principalInput;
             }
             setError('');
-            onAdd({ type: debtFormType, amount, currency, party, desc, date, installmentCount, firstDueDate, projectId: projSelect ? projSelect.value : undefined });
+            onAdd({
+              type: debtFormType, amount, currency, party, desc, date,
+              rateSnapshot, installmentCount, firstDueDate, principalAmount,
+              projectId: projSelect ? projSelect.value : undefined,
+            });
             document.getElementById('d-amount').value = '';
             document.getElementById('d-party').value = '';
             document.getElementById('d-desc').value = '';
             setInstallmentOn(false);
+            setCurrency('TRY');
+            setDate(todayStr());
           }}
         >
           Kaydet
@@ -980,8 +1018,9 @@ function ProjectScreen(props) {
 
   const [txnError, setTxnError] = useState('');
   const [addBankOpen, setAddBankOpen] = useState(false);
+  const [txnPartySearch, setTxnPartySearch] = useState('');
   if (!project) return null;
-  const cats = formType === 'gelir' ? CATS_GELIR : CATS_GIDER;
+  const cats = CATS_GELIR;
 
   return (
     <div className="kasa-wrap">
@@ -1045,7 +1084,7 @@ function ProjectScreen(props) {
           </div>
           <RatesBar rates={rates} ratesLoading={ratesLoading} onRefresh={onRefreshRates} />
           <div className="kasa-grid">
-            <DebtForm projects={projects} showProjectSelect={false} debtFormType={debtFormType} setDebtFormType={setDebtFormType} onAdd={onAddDebt} />
+            <DebtForm projects={projects} showProjectSelect={false} debtFormType={debtFormType} setDebtFormType={setDebtFormType} rates={rates} onAdd={onAddDebt} />
             <DebtListWithRates debts={debts} debtPayments={debtPayments} installments={installments} projects={projects} rates={rates} debtFilter={debtFilter} setDebtFilter={setDebtFilter} showProjectTag={false} onOpenPayments={onOpenPayments} onEdit={onEditDebt} onDelete={onDeleteDebt} />
           </div>
           {showRateIssue && (
@@ -1063,12 +1102,10 @@ function ProjectScreen(props) {
               </div>
               <label className="kasa-field">Tutar (₺)</label>
               <input className="kasa-input" id="f-amount" type="number" min="0" step="0.01" placeholder="0.00" />
-              <label className="kasa-field">Kategori</label>
-              <select className="kasa-select" id="f-cat">
-                {cats.map((c) => <option key={c} value={c}>{c}</option>)}
-              </select>
-              {formType === 'gider' && (
+              {formType === 'gider' ? (
                 <>
+                  <label className="kasa-field">Kime</label>
+                  <input className="kasa-input" id="f-party" placeholder="Örn. Ahmet Usta / Belediye" />
                   <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' }}>
                     <label className="kasa-field" style={{ margin: '10px 0 5px' }}>Banka</label>
                     <button
@@ -1088,6 +1125,13 @@ function ProjectScreen(props) {
                     {banks.map((b) => <option key={b.id} value={b.name}>{b.name}</option>)}
                   </select>
                 </>
+              ) : (
+                <>
+                  <label className="kasa-field">Kategori</label>
+                  <select className="kasa-select" id="f-cat">
+                    {cats.map((c) => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                </>
               )}
               <label className="kasa-field">Açıklama</label>
               <input className="kasa-input" id="f-desc" placeholder="Örn. Ocak ayı kira" />
@@ -1098,15 +1142,20 @@ function ProjectScreen(props) {
                 className="kasa-save"
                 onClick={() => {
                   const amount = parseFloat(document.getElementById('f-amount').value);
-                  const category = document.getElementById('f-cat').value;
+                  const catSelect = document.getElementById('f-cat');
+                  const category = formType === 'gelir' && catSelect ? catSelect.value : null;
+                  const partyInput = document.getElementById('f-party');
+                  const party = formType === 'gider' && partyInput ? partyInput.value.trim() : null;
                   const bankSelect = document.getElementById('f-bank');
                   const bank = formType === 'gider' && bankSelect ? bankSelect.value : null;
                   const desc = document.getElementById('f-desc').value.trim();
                   const date = document.getElementById('f-date').value || todayStr();
                   if (!amount || amount <= 0) { setTxnError('Geçerli bir tutar girin.'); return; }
+                  if (formType === 'gider' && !party) { setTxnError('Kime ödendiğini girin.'); return; }
                   setTxnError('');
-                  onAddTxn({ projectId: project.id, type: formType, amount, category, bank, desc, date });
+                  onAddTxn({ projectId: project.id, type: formType, amount, category, party, bank, desc, date });
                   document.getElementById('f-amount').value = '';
+                  if (partyInput) partyInput.value = '';
                   document.getElementById('f-desc').value = '';
                 }}
               >
@@ -1122,24 +1171,48 @@ function ProjectScreen(props) {
               <button className={filter === 'gelir' ? 'active' : ''} onClick={() => setFilter('gelir')}>Gelirler</button>
               <button className={filter === 'gider' ? 'active' : ''} onClick={() => setFilter('gider')}>Giderler</button>
             </div>
+            <input
+              className="kasa-input"
+              placeholder="Kime ödendi ara..."
+              value={txnPartySearch}
+              onChange={(e) => setTxnPartySearch(e.target.value)}
+              style={{ marginBottom: 12 }}
+            />
             <div>
-              {txns.length === 0 ? (
-                <div className="kasa-empty">Henüz kayıt yok. Soldaki formdan ilk fişi kesin.</div>
-              ) : (
-                txns.map((t) => (
-                  <div className="kasa-row" key={t.id}>
-                    <div className="kasa-row-date">{fmtDate(t.txn_date)}</div>
-                    <div>
-                      <div className="kasa-row-desc">{t.description || t.category}</div>
-                      <div className="kasa-row-cat">
-                        {t.category}{t.bank ? ' · ' + t.bank : ''} · <span className="kasa-row-by">{t.added_by}</span>
+              {(() => {
+                const search = txnPartySearch.trim().toLowerCase();
+                const searchedTxns = search ? txns.filter((t) => (t.party || '').toLowerCase().includes(search)) : txns;
+                if (searchedTxns.length === 0) {
+                  return <div className="kasa-empty">{search ? 'Bu aramaya uyan kayıt yok.' : 'Henüz kayıt yok. Soldaki formdan ilk fişi kesin.'}</div>;
+                }
+                return (
+                  <>
+                    {searchedTxns.map((t) => (
+                      <div className="kasa-row" key={t.id}>
+                        <div className="kasa-row-date">{fmtDate(t.txn_date)}</div>
+                        <div>
+                          <div className="kasa-row-desc">
+                            {t.type === 'gider' ? (t.party || t.description || t.category) : (t.description || t.category)}
+                          </div>
+                          <div className="kasa-row-cat">
+                            {t.type === 'gider'
+                              ? <>{t.party && t.description ? t.description + ' · ' : ''}{t.bank ? t.bank + ' · ' : ''}</>
+                              : <>{t.category} · </>}
+                            <span className="kasa-row-by">{t.added_by}</span>
+                          </div>
+                        </div>
+                        <div className={`kasa-stamp ${t.type}`}>{t.type === 'gelir' ? '+' : '−'} {fmtMoney(t.amount)}</div>
+                        <button className="kasa-del" title="Sil" onClick={() => onDeleteTxn(t.id)}>✕</button>
                       </div>
-                    </div>
-                    <div className={`kasa-stamp ${t.type}`}>{t.type === 'gelir' ? '+' : '−'} {fmtMoney(t.amount)}</div>
-                    <button className="kasa-del" title="Sil" onClick={() => onDeleteTxn(t.id)}>✕</button>
-                  </div>
-                ))
-              )}
+                    ))}
+                    {search && (
+                      <div className="kasa-search-total">
+                        <span>Bu aramada toplam ödenen <strong>{fmtMoney(searchedTxns.filter((t) => t.type === 'gider').reduce((s, t) => s + Number(t.amount), 0))}</strong></span>
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
             </div>
           </div>
         </div>
@@ -1199,7 +1272,7 @@ function CompanyDebtsScreen(props) {
       </div>
       <RatesBar rates={rates} ratesLoading={ratesLoading} onRefresh={onRefreshRates} />
       <div className="kasa-grid">
-        <DebtForm projects={projects} showProjectSelect={true} debtFormType={debtFormType} setDebtFormType={setDebtFormType} onAdd={onAddDebt} />
+        <DebtForm projects={projects} showProjectSelect={true} debtFormType={debtFormType} setDebtFormType={setDebtFormType} rates={rates} onAdd={onAddDebt} />
         <DebtListWithRates debts={debts} debtPayments={debtPayments} installments={installments} projects={projects} rates={rates} debtFilter={debtFilter} setDebtFilter={setDebtFilter} showProjectTag={true} onOpenPayments={onOpenPayments} onEdit={onEditDebt} onDelete={onDeleteDebt} />
       </div>
       {showRateIssue && (
@@ -1217,6 +1290,10 @@ function formatCurrencyAmount(amount, currency) {
 }
 
 function DebtListWithRates({ debts, debtPayments, installments, projects, rates, debtFilter, setDebtFilter, showProjectTag, onOpenPayments, onEdit, onDelete }) {
+  const [partySearch, setPartySearch] = useState('');
+  const search = partySearch.trim().toLowerCase();
+  const searchedDebts = search ? debts.filter((d) => (d.party || '').toLowerCase().includes(search)) : debts;
+
   return (
     <div className="kasa-panel">
       <h2>Borçlar</h2>
@@ -1225,12 +1302,20 @@ function DebtListWithRates({ debts, debtPayments, installments, projects, rates,
         <button className={debtFilter === 'odenmemis' ? 'active' : ''} onClick={() => setDebtFilter('odenmemis')}>Ödenmemiş</button>
         <button className={debtFilter === 'alinan' ? 'active' : ''} onClick={() => setDebtFilter('alinan')}>Aldığımız</button>
         <button className={debtFilter === 'verilen' ? 'active' : ''} onClick={() => setDebtFilter('verilen')}>Verdiğimiz</button>
+        <button className={debtFilter === 'taksitli' ? 'active' : ''} onClick={() => setDebtFilter('taksitli')}>Taksitli</button>
       </div>
+      <input
+        className="kasa-input"
+        placeholder="Kimden/kime ara..."
+        value={partySearch}
+        onChange={(e) => setPartySearch(e.target.value)}
+        style={{ marginBottom: 12 }}
+      />
       <div>
-        {debts.length === 0 ? (
-          <div className="kasa-empty">Henüz borç kaydı yok.</div>
+        {searchedDebts.length === 0 ? (
+          <div className="kasa-empty">{search ? 'Bu aramaya uyan borç yok.' : 'Henüz borç kaydı yok.'}</div>
         ) : (
-          debts.map((d) => {
+          searchedDebts.map((d) => {
             const proj = projects.find((pp) => pp.id === d.project_id);
             const meta = currencyMeta(d.currency);
             const isForeign = d.currency && d.currency !== 'TRY';
@@ -1264,7 +1349,7 @@ function DebtListWithRates({ debts, debtPayments, installments, projects, rates,
                     <>
                       {new Intl.NumberFormat('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(d.amount)} {meta.unit ? meta.unit + ' ' : ''}{meta.label}
                       <br />
-                      <span style={{ fontSize: 11, fontWeight: 500 }}>≈ {fmtMoney(debtTRYValue({ amount: d.amount, currency: d.currency }, rates))}</span>
+                      <span style={{ fontSize: 11, fontWeight: 500 }}>≈ {fmtMoney(debtTRYValue({ amount: d.amount, currency: d.currency, rate_snapshot: d.rate_snapshot }, rates))}</span>
                     </>
                   ) : fmtMoney(d.amount)}
                 </div>
@@ -1276,6 +1361,21 @@ function DebtListWithRates({ debts, debtPayments, installments, projects, rates,
           })
         )}
       </div>
+      {search && searchedDebts.length > 0 && (() => {
+        let alinan = 0, verilen = 0;
+        searchedDebts.forEach((d) => {
+          const remaining = debtRemaining(d, debtPayments, installments);
+          if (remaining <= 0) return;
+          const val = debtTRYValue({ amount: remaining, currency: d.currency, rate_snapshot: d.rate_snapshot }, rates);
+          if (d.type === 'alinan') alinan += val; else verilen += val;
+        });
+        return (
+          <div className="kasa-search-total">
+            <span>Bu aramada ödenmemiş borç <strong>{fmtMoney(alinan)}</strong></span>
+            <span>Bu aramada ödenmemiş alacak <strong>{fmtMoney(verilen)}</strong></span>
+          </div>
+        );
+      })()}
     </div>
   );
 }
@@ -1374,6 +1474,13 @@ function InstallmentModal({ debt, installments, onTogglePaid, onClose }) {
           <span>Kalan <strong style={{ color: settled ? 'var(--income)' : 'var(--expense)' }}>{formatCurrencyAmount(remaining, debt.currency)}</strong></span>
         </div>
 
+        {debt.principal_amount != null && (
+          <div className="kasa-payment-summary">
+            <span>Ana Para <strong>{formatCurrencyAmount(Number(debt.principal_amount), debt.currency)}</strong></span>
+            <span>Faiz <strong style={{ color: 'var(--expense)' }}>{formatCurrencyAmount(Number(debt.amount) - Number(debt.principal_amount), debt.currency)}</strong></span>
+          </div>
+        )}
+
         <div className="kasa-payment-list">
           {sorted.map((inst) => {
             const overdue = !inst.paid && inst.due_date < today;
@@ -1402,7 +1509,7 @@ function InstallmentModal({ debt, installments, onTogglePaid, onClose }) {
   );
 }
 
-function PaymentModal({ debt, payments, onAddPayment, onEditPayment, onDeletePayment, onClose }) {
+function PaymentModal({ debt, payments, rates, onAddPayment, onEditPayment, onDeletePayment, onClose }) {
   const [error, setError] = useState('');
   const [editingPayment, setEditingPayment] = useState(null);
   if (!debt) return null;
@@ -1410,6 +1517,9 @@ function PaymentModal({ debt, payments, onAddPayment, onEditPayment, onDeletePay
   const paidAmount = debtPaidAmount(debt, payments);
   const remaining = debtRemaining(debt, payments);
   const settled = remaining <= 0.0001;
+  const isForeign = debt.currency && debt.currency !== 'TRY';
+  const remainingTRYFrozen = isForeign ? debtTRYValue({ amount: remaining, currency: debt.currency, rate_snapshot: debt.rate_snapshot }, rates) : null;
+  const remainingTRYLive = isForeign ? debtTRYValueLive({ amount: remaining, currency: debt.currency }, rates) : null;
   const sortedPayments = [...payments].sort(
     (a, b) => b.payment_date.localeCompare(a.payment_date) || new Date(b.created_at) - new Date(a.created_at)
   );
@@ -1443,6 +1553,15 @@ function PaymentModal({ debt, payments, onAddPayment, onEditPayment, onDeletePay
           <span>Ödenen <strong>{formatCurrencyAmount(paidAmount, debt.currency)}</strong></span>
           <span>Kalan <strong style={{ color: settled ? 'var(--income)' : 'var(--expense)' }}>{formatCurrencyAmount(remaining, debt.currency)}</strong></span>
         </div>
+
+        {isForeign && !settled && (
+          <div className="kasa-search-total">
+            <span>Kalanın ₺ karşılığı ({debt.rate_snapshot ? 'alındığı kur' : 'güncel kur'}) <strong>{fmtMoney(remainingTRYFrozen)}</strong></span>
+            {debt.rate_snapshot && (
+              <span>Bugünkü kurla <strong>{fmtMoney(remainingTRYLive)}</strong> ({remainingTRYLive >= remainingTRYFrozen ? '+' : ''}{fmtMoney(remainingTRYLive - remainingTRYFrozen)})</span>
+            )}
+          </div>
+        )}
 
         {payments.length === 0 && debt.paid && (
           <p style={{ fontSize: 12, color: 'var(--ink-soft)', marginTop: 8 }}>
